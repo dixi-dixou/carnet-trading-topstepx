@@ -1,0 +1,16 @@
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+
+* { box-sizing: border-box; }
+
+html, body, #racine {
+  margin: 0;
+  padding: 0;
+  min-height: 100%;
+  background: #0A0D12;
+}
+
+body {
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  color: #E4EAF2;
+  -webkit-font-smoothing: antialiased;
+}
