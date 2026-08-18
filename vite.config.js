@@ -2,11 +2,10 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
 /**
- * `base` doit correspondre au nom du dépôt pour un déploiement sur GitHub
- * Pages (https://<utilisateur>.github.io/<depot>/). Laissez "/" si vous
- * déployez sur un domaine racine, Netlify ou Vercel.
+ * `base` reste à "/" pour un déploiement à la racine d'un domaine
+ * (Vercel, Netlify). Sur GitHub Pages, mettez plutôt "/nom-du-depot/".
  */
 export default defineConfig({
   plugins: [react()],
-  base: "/carnet-trading-topstepx/",
+  base: "/",
 });
