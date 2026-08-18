@@ -39,6 +39,7 @@ const CLE = "journal-topstepx-v3";
 
 /* Checklist de validation, modifiable dans l'onglet Rituel */
 const CHECKLIST_DEFAUT = [
+  { id: "c0", cat: "Contexte", texte: "PDLL posé ET verrouillé sur les deux comptes (Réglages → Risk Settings → Lock Risk Settings for Day)" },
   { id: "c1", cat: "Contexte", texte: "Agenda macro vérifié — aucune annonce dans les 15 prochaines minutes" },
   { id: "c2", cat: "Contexte", texte: "Plus haut et plus bas de la session asiatique tracés" },
   { id: "c3", cat: "Contexte", texte: "Plus haut, plus bas et clôture de la veille tracés" },
@@ -66,7 +67,7 @@ const CHECKLIST_DEFAUT = [
 
 const CATS = ["Contexte", "Unités de temps", "Le trade", "Moi"];
 
-const GARDE_FOUS_DEFAUT = { maxTrades: 4, maxMicrosJour: 10, maxPertesSuite: 2, perteMaxJour: 400, objectifJour: 300 };
+const GARDE_FOUS_DEFAUT = { maxTrades: 4, maxMicrosJour: 10, maxPertesSuite: 2, perteMaxJour: 400, objectifJour: 300, pauseMinutes: 15 };
 
 const comptesDefaut = () => ([
   { id: "a", nom: "Compte A", type: "Express Funded", preset: "50K",
@@ -439,9 +440,22 @@ export default function JournalTrading() {
   const [edition, setEdition] = useState(null);
   const [nouveauRetrait, setNouveauRetrait] = useState(null);
   const [importEnCours, setImportEnCours] = useState(null);
+  const [pause, setPause] = useState(null);
+  const [verrou, setVerrou] = useState(null);
+  const [tic, setTic] = useState(0);
   const [rapportImport, setRapportImport] = useState("");
 
   const aujourdhui = new Date().toISOString().slice(0, 10);
+
+  /* Horloge du sas de décompression */
+  useEffect(() => {
+    if (!pause) return;
+    const h = setInterval(() => setTic((n) => n + 1), 1000);
+    return () => clearInterval(h);
+  }, [pause]);
+
+  const verrouActif = verrou && verrou.jour === aujourdhui;
+  const secondesRestantes = pause ? Math.max(0, Math.ceil((pause.fin - Date.now()) / 1000)) : 0;
 
   useEffect(() => {
     (async () => {
@@ -457,6 +471,8 @@ export default function JournalTrading() {
           if (Array.isArray(d.checklist) && d.checklist.length) setChecklist(d.checklist);
           if (d.gardeFous) setGardeFous({ ...GARDE_FOUS_DEFAUT, ...d.gardeFous });
           if (d.coches) setCoches(d.coches);
+          if (d.pause && d.pause.fin > Date.now()) setPause(d.pause);
+          if (d.verrou) setVerrou(d.verrou);
         }
       } catch (e) { /* première utilisation */ }
       finally { setPret(true); }
@@ -467,12 +483,12 @@ export default function JournalTrading() {
     if (!pret) return;
     const t = setTimeout(async () => {
       try {
-        await stockage.set(CLE, JSON.stringify({ comptes, trades, retraits, notes, setups, checklist, gardeFous, coches }));
+        await stockage.set(CLE, JSON.stringify({ comptes, trades, retraits, notes, setups, checklist, gardeFous, coches, pause, verrou }));
         setErreur("");
       } catch (e) { setErreur("Enregistrement impossible. Vos dernières saisies ne sont pas sauvegardées."); }
     }, 400);
     return () => clearTimeout(t);
-  }, [comptes, trades, retraits, notes, setups, checklist, gardeFous, coches, pret]);
+  }, [comptes, trades, retraits, notes, setups, checklist, gardeFous, coches, pause, verrou, pret]);
 
   const enrichis = useMemo(() => trades.map((t) => {
     const pnlNet = calculPnl(t);
@@ -521,8 +537,16 @@ export default function JournalTrading() {
   });
   const enregistrerTrade = () => {
     const t = { ...edition, id: edition.id || uid() };
+    const perte = calculPnl(t) < 0;
     setTrades((p) => edition.id ? p.map((x) => (x.id === t.id ? t : x)) : [t, ...p]);
     setEdition(null);
+    /* Une perte ouvre le sas : c'est le seul moment où la décision compte. */
+    if (perte && !edition.id) {
+      setPause({
+        fin: Date.now() + gardeFous.pauseMinutes * 60000,
+        montant: calculPnl(t), jour: aujourdhui, reponses: {},
+      });
+    }
   };
   const majCompte = (id, patch) => setComptes((p) => p.map((c) => (c.id === id ? { ...c, ...patch } : c)));
   const appliquerPreset = (id, preset) => majCompte(id, { preset, ...PRESETS[preset] });
@@ -587,7 +611,7 @@ export default function JournalTrading() {
           <p>Deux Express Funded Accounts · objectif {usd(objectifCombine, 0)} net par mois</p>
         </div>
         <div className="tete-actions">
-          <button className="btn primaire" onClick={nouveauTrade}>+ Saisir un trade</button>
+          <button className="btn primaire" onClick={nouveauTrade} disabled={verrouActif}>+ Saisir un trade</button>
           <button className="btn" onClick={() => { setRapportImport(""); setImportEnCours(comptes[0].id); }}>
             Importer un export TopstepX
           </button>
@@ -596,6 +620,21 @@ export default function JournalTrading() {
       </header>
 
       {erreur && <div className="alerte">{erreur}</div>}
+
+      {verrouActif && (
+        <div className="verrou-bandeau">
+          <div>
+            <b>Journée close</b>
+            <span>
+              Vous avez fermé la séance à {verrou.heure}. La saisie est désactivée jusqu'à demain —
+              exactement ce que vous aviez décidé à froid.
+            </span>
+          </div>
+          <button className="lien" onClick={() => {
+            if (window.confirm("Rouvrir la journée annule la décision que vous aviez prise à froid. Vraiment ?")) setVerrou(null);
+          }}>Rouvrir</button>
+        </div>
+      )}
 
       <nav className="onglets" role="tablist">
         {[["bord", "Tableau de bord"], ["retraits", "Retraits"], ["trades", "Trades"],
@@ -1315,6 +1354,74 @@ export default function JournalTrading() {
         </div>
       )}
 
+      {pause && (
+        <div className="fond-modal sas">
+          <div className="modal etroit" role="dialog" aria-label="Sas de décompression">
+            <div className="sas-tete">
+              <span className="sas-montant">{usd(pause.montant)}</span>
+              <span className="sas-sous">Une perte enregistrée. On respire avant tout le reste.</span>
+            </div>
+
+            <div className="sas-horloge">
+              <span className="sas-temps">
+                {String(Math.floor(secondesRestantes / 60)).padStart(2, "0")}:
+                {String(secondesRestantes % 60).padStart(2, "0")}
+              </span>
+              <div className="jauge-piste">
+                <div className="jauge-barre" style={{
+                  width: (1 - secondesRestantes / (gardeFous.pauseMinutes * 60)) * 100 + "%",
+                  background: secondesRestantes ? "#F2A03D" : "#3DD68C",
+                }} />
+              </div>
+            </div>
+
+            <div className="formulaire">
+              <Champ label="Cette perte était-elle prévue par mon plan ?" large>
+                <select value={pause.reponses.prevue || ""}
+                  onChange={(e) => setPause({ ...pause, reponses: { ...pause.reponses, prevue: e.target.value } })}>
+                  <option value="">Répondre</option>
+                  <option>Oui — stop touché, trade correct</option>
+                  <option>Non — j'ai improvisé</option>
+                </select>
+              </Champ>
+              <Champ label="Qu'est-ce que je ressens là, maintenant ?" large>
+                <select value={pause.reponses.etat || ""}
+                  onChange={(e) => setPause({ ...pause, reponses: { ...pause.reponses, etat: e.target.value } })}>
+                  <option value="">Répondre</option>
+                  <option>Calme — la perte fait partie du métier</option>
+                  <option>Agacé — j'ai envie de me refaire</option>
+                  <option>En colère</option>
+                </select>
+              </Champ>
+              <Champ label="Le prochain trade : lequel, et pourquoi maintenant ?" large>
+                <textarea rows={2} value={pause.reponses.suite || ""}
+                  onChange={(e) => setPause({ ...pause, reponses: { ...pause.reponses, suite: e.target.value } })}
+                  placeholder="Si vous ne pouvez pas le décrire précisément, c'est qu'il n'existe pas encore." />
+              </Champ>
+            </div>
+
+            {pause.reponses.etat && pause.reponses.etat !== "Calme — la perte fait partie du métier" && (
+              <p className="aide" style={{ color: "#FF5C5C" }}>
+                Vous venez de nommer l'état exact dans lequel les comptes se vident. Le trade que vous
+                cherchez n'est pas sur le graphique.
+              </p>
+            )}
+
+            <div className="modal-pied">
+              <button className="btn danger-plein" onClick={() => {
+                setVerrou({ jour: aujourdhui, heure: new Date().toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" }) });
+                setPause(null);
+              }}>Je ferme la journée</button>
+              <button className="btn primaire"
+                disabled={secondesRestantes > 0 || !pause.reponses.prevue || !pause.reponses.etat || !(pause.reponses.suite || "").trim()}
+                onClick={() => setPause(null)}>
+                {secondesRestantes > 0 ? "Attendre la fin du sas" : "Je reprends"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <footer className="pied">
         Tous les calculs reposent sur vos trades clôturés et sur les paramètres que vous avez saisis.
         Les règles Topstep évoluent : confirmez vos plafonds, votre parcours de retrait et votre partage
@@ -1587,6 +1694,22 @@ const CSS = `
 .curseur span{display:flex;justify-content:space-between;font-size:11.5px;color:var(--doux);margin-bottom:3px;}
 .curseur b{font-family:'IBM Plex Mono',monospace;color:var(--ambre);}
 .curseur input[type=range]{width:100%;padding:0;accent-color:#F2A03D;background:none;border:none;}
+
+.verrou-bandeau{background:#1A1420;border:1px solid #3A2A45;border-left:3px solid #A97BD6;border-radius:10px;
+  padding:13px 17px;margin-bottom:14px;display:flex;justify-content:space-between;align-items:center;gap:14px;}
+.verrou-bandeau div{display:flex;flex-direction:column;gap:3px;}
+.verrou-bandeau b{font-family:'Space Grotesk',sans-serif;font-size:14px;color:#C9A7E8;}
+.verrou-bandeau span{font-size:12px;color:var(--doux);line-height:1.5;}
+
+.fond-modal.sas{background:rgba(5,8,12,.96);align-items:center;}
+.sas-tete{text-align:center;margin-bottom:22px;}
+.sas-montant{display:block;font-family:'IBM Plex Mono',monospace;font-size:34px;font-weight:600;color:var(--perte);}
+.sas-sous{display:block;font-size:12.5px;color:var(--doux);margin-top:6px;}
+.sas-horloge{text-align:center;margin-bottom:22px;}
+.sas-temps{display:block;font-family:'IBM Plex Mono',monospace;font-size:26px;color:var(--ambre);margin-bottom:10px;
+  letter-spacing:.04em;}
+.btn.danger-plein{background:#331A1A;border-color:#6B2B2B;color:#FFB4B4;}
+.btn.danger-plein:hover{background:#4A2020;}
 
 .pied{color:var(--creux);font-size:11.5px;margin-top:22px;padding-top:14px;border-top:1px solid var(--bord);line-height:1.6;}
 
