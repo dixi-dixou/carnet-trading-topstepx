@@ -70,12 +70,11 @@ const CATS = ["Contexte", "Unités de temps", "Le trade", "Moi"];
 const GARDE_FOUS_DEFAUT = { maxTrades: 4, maxMicrosJour: 10, maxPertesSuite: 2, perteMaxJour: 400, objectifJour: 300, pauseMinutes: 15 };
 
 const comptesDefaut = () => ([
-  { id: "a", nom: "Compte A", type: "Express Funded", preset: "50K",
+  { id: "a", nom: "Compte principal", type: "Express Funded", preset: "50K",
     mll: 2000, dll: 1000, maxContrats: 50, plafond: 5000, commissionAR: 1.22,
-    chemin: "Standard", seuilJour: 150, split: 90, objectifNet: 2500, couleur: "#F2A03D" },
-  { id: "b", nom: "Compte B", type: "Express Funded", preset: "50K",
-    mll: 2000, dll: 1000, maxContrats: 50, plafond: 5000, commissionAR: 1.22,
-    chemin: "Standard", seuilJour: 150, split: 90, objectifNet: 2500, couleur: "#5AA9E6" },
+    chemin: "Standard", seuilJour: 150, split: 90, couleur: "#F2A03D",
+    /* Objectifs, tous modifiables dans l'onglet Objectifs */
+    retraitBrut: 1000, retraitsParMois: 2, soldeCible: 3000, jalonMll: 2000 },
 ]);
 
 /* ------------------------------------------------------------------ */
@@ -192,8 +191,13 @@ function situationCompte(compte, tradesCompte, retraitsCompte, aujourdhui) {
   const consistance = profitCycle > 0 ? (meilleurJourCycle / profitCycle) * 100 : NaN;
 
   /* Objectif de retrait */
-  const brutVise = Math.min(brutPourNet(compte.objectifNet, compte.split), compte.plafond);
-  const soldeRequis = brutVise * 2;
+  const brutVise = Math.min(compte.retraitBrut, compte.plafond);
+  const netVise = brutVise * (compte.split / 100);
+  /* Le solde cible est saisi à la main, mais jamais sous le double du retrait
+     visé, sans quoi la règle des 50 % rendrait la demande impossible. */
+  const soldeRequis = Math.max(compte.soldeCible || 0, brutVise * 2);
+  const matelas = soldeRequis - brutVise;
+  const jalonAtteint = solde >= (compte.jalonMll || 0);
   const demandable = Math.min(solde * 0.5, compte.plafond);
   const netSiDemande = demandable * (compte.split / 100);
 
@@ -208,7 +212,7 @@ function situationCompte(compte, tradesCompte, retraitsCompte, aujourdhui) {
     pnlJour, margeJour, totalRetire, totalPercu, dernierRetrait,
     joursTrades: jours.length, joursGagnants: joursGagnants.length, joursRequis,
     profitCycle, meilleurJourCycle, consistance,
-    brutVise, soldeRequis, demandable, netSiDemande,
+    brutVise, netVise, soldeRequis, matelas, jalonAtteint, demandable, netSiDemande,
     joursOk, soldeOk, consistanceOk, eligible,
     progression: soldeRequis > 0 ? (solde / soldeRequis) * 100 : 0,
     listeJours: cycle,
@@ -422,6 +426,7 @@ function Repartition({ titre, lignes }) {
 export default function JournalTrading() {
   const [pret, setPret] = useState(false);
   const [erreur, setErreur] = useState("");
+  const [sauveA, setSauveA] = useState(null);
   const [comptes, setComptes] = useState(comptesDefaut);
   const [trades, setTrades] = useState([]);
   const [retraits, setRetraits] = useState([]);
@@ -463,7 +468,7 @@ export default function JournalTrading() {
         const r = await stockage.get(CLE);
         if (r && r.value) {
           const d = JSON.parse(r.value);
-          if (d.comptes?.length === 2) setComptes(d.comptes);
+          if (d.comptes?.length) setComptes(d.comptes.map((c) => ({ ...comptesDefaut()[0], ...c })));
           if (Array.isArray(d.trades)) setTrades(d.trades);
           if (Array.isArray(d.retraits)) setRetraits(d.retraits);
           if (d.notes) setNotes(d.notes);
@@ -484,8 +489,12 @@ export default function JournalTrading() {
     const t = setTimeout(async () => {
       try {
         await stockage.set(CLE, JSON.stringify({ comptes, trades, retraits, notes, setups, checklist, gardeFous, coches, pause, verrou }));
+        setSauveA(new Date());
         setErreur("");
-      } catch (e) { setErreur("Enregistrement impossible. Vos dernières saisies ne sont pas sauvegardées."); }
+      } catch (e) {
+        setSauveA(null);
+        setErreur("Ce navigateur bloque le stockage local (navigation privée, ou espace saturé). Utilisez le bouton Sauvegarde pour conserver vos données.");
+      }
     }, 400);
     return () => clearTimeout(t);
   }, [comptes, trades, retraits, notes, setups, checklist, gardeFous, coches, pause, verrou, pret]);
@@ -582,6 +591,34 @@ export default function JournalTrading() {
     }
   };
 
+  const toutExporter = () => {
+    const data = JSON.stringify({ version: 3, date: new Date().toISOString(),
+      comptes, trades, retraits, notes, setups, checklist, gardeFous, coches }, null, 2);
+    const url = URL.createObjectURL(new Blob([data], { type: "application/json" }));
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `carnet-sauvegarde-${aujourdhui}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const toutRestaurer = async (fichier) => {
+    try {
+      const d = JSON.parse(await fichier.text());
+      if (d.comptes?.length) setComptes(d.comptes.map((c) => ({ ...comptesDefaut()[0], ...c })));
+      if (Array.isArray(d.trades)) setTrades(d.trades);
+      if (Array.isArray(d.retraits)) setRetraits(d.retraits);
+      if (d.notes) setNotes(d.notes);
+      if (Array.isArray(d.setups) && d.setups.length) setSetups(d.setups);
+      if (Array.isArray(d.checklist) && d.checklist.length) setChecklist(d.checklist);
+      if (d.gardeFous) setGardeFous({ ...GARDE_FOUS_DEFAUT, ...d.gardeFous });
+      if (d.coches) setCoches(d.coches);
+      setRapportImport(`Sauvegarde restaurée : ${d.trades?.length || 0} trades.`);
+    } catch {
+      setRapportImport("Fichier de sauvegarde illisible.");
+    }
+  };
+
   const exporterCsv = () => {
     const cols = ["date", "compte", "instrument", "sens", "contrats", "entree", "sortie", "stop", "frais", "pnlNet", "R", "setup", "session", "emotion", "respect", "notes"];
     const lignes = [cols.join(";")].concat(filtres.map((t) => cols.map((c) => {
@@ -599,7 +636,8 @@ export default function JournalTrading() {
   const compteEdite = edition ? comptes.find((c) => c.id === edition.compteId) : null;
   const apercuPnl = edition ? calculPnl(edition) : 0;
   const apercuRisque = edition ? risqueInitial(edition) : 0;
-  const objectifCombine = comptes.reduce((s, c) => s + c.objectifNet, 0);
+  const cpt = comptes[0];
+  const objectifMensuel = cpt.retraitBrut * (cpt.split / 100) * cpt.retraitsParMois;
 
   return (
     <div className="app">
@@ -608,7 +646,14 @@ export default function JournalTrading() {
       <header className="tete">
         <div className="titre">
           <h1>Carnet de bord</h1>
-          <p>Deux Express Funded Accounts · objectif {usd(objectifCombine, 0)} net par mois</p>
+          <p>
+            {cpt.type} {cpt.preset} · objectif {usd(objectifMensuel, 0)} net par mois
+            <span className={"etat-sauve " + (sauveA ? "ok" : "ko")}>
+              {sauveA
+                ? `enregistré à ${sauveA.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}`
+                : "non enregistré"}
+            </span>
+          </p>
         </div>
         <div className="tete-actions">
           <button className="btn primaire" onClick={nouveauTrade} disabled={verrouActif}>+ Saisir un trade</button>
@@ -616,6 +661,12 @@ export default function JournalTrading() {
             Importer un export TopstepX
           </button>
           <button className="btn" onClick={exporterCsv}>Exporter en CSV</button>
+          <button className="btn" onClick={toutExporter}>Sauvegarde</button>
+          <label className="btn" style={{ display: "inline-block" }}>
+            Restaurer
+            <input type="file" accept=".json" style={{ display: "none" }}
+              onChange={(e) => e.target.files?.[0] && toutRestaurer(e.target.files[0])} />
+          </label>
         </div>
       </header>
 
@@ -638,7 +689,7 @@ export default function JournalTrading() {
 
       <nav className="onglets" role="tablist">
         {[["bord", "Tableau de bord"], ["retraits", "Retraits"], ["trades", "Trades"],
-          ["analyse", "Analyse"], ["journal", "Rituel"], ["comptes", "Comptes"]].map(([k, l]) => (
+          ["analyse", "Analyse"], ["journal", "Rituel"], ["objectifs", "Objectifs"], ["comptes", "Comptes"]].map(([k, l]) => (
           <button key={k} role="tab" aria-selected={onglet === k}
             className={"onglet" + (onglet === k ? " actif" : "")} onClick={() => setOnglet(k)}>{l}</button>
         ))}
@@ -755,7 +806,7 @@ export default function JournalTrading() {
                       detail={`${s.joursGagnants} sur ${s.joursRequis} · seuil ${usd(c.seuilJour, 0)} net`} />
                     <Etape ok={s.soldeOk} titre="Solde suffisant"
                       detail={s.soldeOk ? `${usd(s.solde, 0)} disponible`
-                        : `${usd(manque, 0)} à gagner pour viser ${usd(c.objectifNet, 0)} net`} />
+                        : `${usd(manque, 0)} à gagner pour demander ${usd(s.brutVise, 0)}`} />
                     {c.chemin === "Consistance" && (
                       <Etape ok={s.consistanceOk} titre="Consistance sous 40 %"
                         detail={Number.isFinite(s.consistance) ? `Meilleure séance : ${pct(s.consistance)} du profit` : "Pas encore de profit sur le cycle"} />
@@ -1072,6 +1123,97 @@ export default function JournalTrading() {
         );
       })()}
 
+      {onglet === "objectifs" && (() => {
+        const c = cpt;
+        const s2 = situ(c);
+        const netParRetrait = c.retraitBrut * (c.split / 100);
+        const aGagnerParCycle = Math.max(0, s2.soldeRequis - s2.solde);
+        const parJourGagnant = c.retraitBrut / 5;
+        const moisEnCours = aujourdhui.slice(0, 7);
+        const percuCeMois = retraits.filter((r) => (r.date || "").startsWith(moisEnCours))
+          .reduce((a, r) => a + num(r.net), 0);
+
+        return (
+          <section className="grille2">
+            <div className="carte">
+              <h3>Mes objectifs <span className="sous">tout est modifiable ici</span></h3>
+              <div className="formulaire">
+                <Champ label="Montant demandé par retrait">
+                  <input type="number" value={c.retraitBrut}
+                    onChange={(e) => majCompte(c.id, { retraitBrut: num(e.target.value) })} />
+                </Champ>
+                <Champ label="Retraits visés par mois">
+                  <input type="number" value={c.retraitsParMois}
+                    onChange={(e) => majCompte(c.id, { retraitsParMois: num(e.target.value) })} />
+                </Champ>
+                <Champ label="Solde à atteindre avant de demander">
+                  <input type="number" value={c.soldeCible}
+                    onChange={(e) => majCompte(c.id, { soldeCible: num(e.target.value) })} />
+                </Champ>
+                <Champ label="Jalon de verrouillage du MLL">
+                  <input type="number" value={c.jalonMll}
+                    onChange={(e) => majCompte(c.id, { jalonMll: num(e.target.value) })} />
+                </Champ>
+                <Champ label="Seuil du jour gagnant">
+                  <input type="number" value={c.seuilJour}
+                    onChange={(e) => majCompte(c.id, { seuilJour: num(e.target.value) })} />
+                </Champ>
+                <Champ label="Part trader (%)">
+                  <select value={c.split} onChange={(e) => majCompte(c.id, { split: num(e.target.value) })}>
+                    <option value={90}>90 % — partage 90/10</option>
+                    <option value={100}>100 % — 10 000 $ hérités</option>
+                  </select>
+                </Champ>
+              </div>
+
+              <div className="recap">
+                <div><em>Net par retrait</em><b className="gain">{usd(netParRetrait, 0)}</b></div>
+                <div><em>Net par mois</em><b className="gain">{usd(netParRetrait * c.retraitsParMois, 0)}</b></div>
+                <div><em>Matelas conservé</em><b>{usd(s2.matelas, 0)}</b></div>
+                <div><em>Par jour gagnant</em><b>{usd(parJourGagnant, 0)}</b></div>
+              </div>
+              <p className="aide">
+                Cinq jours gagnants par cycle : reconstituer {usd(c.retraitBrut, 0)} demande donc
+                {" "}{usd(parJourGagnant, 0)} par séance gagnante. Le solde cible ne peut jamais descendre
+                sous le double du retrait, la règle des 50 % rendrait la demande impossible.
+              </p>
+            </div>
+
+            <div className="carte">
+              <h3>Où j'en suis</h3>
+
+              <div className="etapes">
+                <Etape ok={s2.jalonAtteint} titre={`MLL verrouillé à ${usd(c.jalonMll, 0)}`}
+                  detail={s2.jalonAtteint
+                    ? "Le compte ne peut plus être perdu, seulement le solde."
+                    : `${usd(c.jalonMll - s2.solde, 0)} à gagner — c'est le jalon le plus important.`} />
+                <Etape ok={s2.joursOk} titre={`${s2.joursRequis} jours gagnants`}
+                  detail={`${s2.joursGagnants} sur ${s2.joursRequis}, seuil ${usd(c.seuilJour, 0)} net`} />
+                <Etape ok={s2.solde >= s2.soldeRequis} titre={`Solde de ${usd(s2.soldeRequis, 0)}`}
+                  detail={aGagnerParCycle > 0 ? `${usd(aGagnerParCycle, 0)} à gagner` : "Atteint, la demande est possible."} />
+              </div>
+
+              <div className="vie-jauges">
+                <Jauge label="Vers le verrouillage du MLL" valeur={s2.solde} total={c.jalonMll}
+                  texte={pct((s2.solde / (c.jalonMll || 1)) * 100)} />
+                <Jauge label="Vers le solde de retrait" valeur={s2.solde} total={s2.soldeRequis}
+                  texte={pct((s2.solde / s2.soldeRequis) * 100)} />
+                <Jauge label={`Objectif du mois (${c.retraitsParMois} retraits)`}
+                  valeur={percuCeMois} total={netParRetrait * c.retraitsParMois}
+                  texte={usd(percuCeMois, 0)} />
+              </div>
+
+              <div className="recap">
+                <div><em>Solde actuel</em><b>{usd(s2.solde, 0)}</b></div>
+                <div><em>Plancher MLL</em><b>{usd(s2.mll, 0)}</b></div>
+                <div><em>Perçu ce mois</em><b className="gain">{usd(percuCeMois, 0)}</b></div>
+                <div><em>Perçu au total</em><b>{usd(s2.totalPercu, 0)}</b></div>
+              </div>
+            </div>
+          </section>
+        );
+      })()}
+
       {/* ---------------- COMPTES ---------------- */}
       {onglet === "comptes" && (
         <section className="grille2">
@@ -1117,9 +1259,7 @@ export default function JournalTrading() {
                       <option value={100}>100 % — 10 000 $ hérités</option>
                     </select>
                   </Champ>
-                  <Champ label="Retrait net visé">
-                    <input type="number" value={c.objectifNet} onChange={(e) => majCompte(c.id, { objectifNet: num(e.target.value) })} />
-                  </Champ>
+
                   <Champ label="Micros max (1 mini = 10 micros)">
                     <input type="number" value={c.maxContrats} onChange={(e) => majCompte(c.id, { maxContrats: num(e.target.value) })} />
                   </Champ>
@@ -1138,8 +1278,8 @@ export default function JournalTrading() {
                   <div><em>Jours tradés</em><b>{s.joursTrades}</b></div>
                 </div>
                 <p className="aide">
-                  Pour toucher {usd(c.objectifNet, 0)} net avec un partage à {c.split} %, il faut demander {usd(s.brutVise, 0)},
-                  donc disposer de {usd(s.soldeRequis, 0)} de solde — la règle des 50 %.
+                  Les objectifs chiffrés se règlent dans l'onglet Objectifs. Ici, on ne touche qu'aux
+                  contraintes imposées par Topstep.
                 </p>
               </div>
             );
@@ -1710,6 +1850,10 @@ const CSS = `
   letter-spacing:.04em;}
 .btn.danger-plein{background:#331A1A;border-color:#6B2B2B;color:#FFB4B4;}
 .btn.danger-plein:hover{background:#4A2020;}
+
+.etat-sauve{margin-left:10px;font-family:'IBM Plex Mono',monospace;font-size:11px;padding:2px 8px;border-radius:10px;}
+.etat-sauve.ok{background:#123326;color:#3DD68C;}
+.etat-sauve.ko{background:#331A1A;color:#FF5C5C;}
 
 .pied{color:var(--creux);font-size:11.5px;margin-top:22px;padding-top:14px;border-top:1px solid var(--bord);line-height:1.6;}
 
