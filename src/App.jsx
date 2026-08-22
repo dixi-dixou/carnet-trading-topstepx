@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback } from "react";
 import { stockage } from "./stockage";
+import { codeSync, envoyer, recuperer } from "./sync";
 import {
   LineChart, Line, BarChart, Bar, XAxis, YAxis, Tooltip,
   ResponsiveContainer, CartesianGrid, Cell, ReferenceLine
@@ -427,6 +428,8 @@ export default function JournalTrading() {
   const [pret, setPret] = useState(false);
   const [erreur, setErreur] = useState("");
   const [sauveA, setSauveA] = useState(null);
+  const [code, setCode] = useState(() => codeSync.lire());
+  const [sync, setSync] = useState({ etat: "repos", message: "" });
   const [comptes, setComptes] = useState(comptesDefaut);
   const [trades, setTrades] = useState([]);
   const [retraits, setRetraits] = useState([]);
@@ -468,9 +471,14 @@ export default function JournalTrading() {
         const r = await stockage.get(CLE);
         if (r && r.value) {
           const d = JSON.parse(r.value);
-          if (d.comptes?.length) setComptes(d.comptes.map((c) => ({ ...comptesDefaut()[0], ...c })));
-          if (Array.isArray(d.trades)) setTrades(d.trades);
-          if (Array.isArray(d.retraits)) setRetraits(d.retraits);
+          if (d.comptes?.length) setComptes([{ ...comptesDefaut()[0], ...d.comptes[0] }]);
+          /* Reprise d'une sauvegarde à deux comptes : les trades et retraits
+             orphelins sont rattachés au compte restant plutôt que perdus. */
+          const idsValides = new Set((d.comptes?.length ? d.comptes : comptesDefaut()).map((c) => c.id));
+          const principal = (d.comptes?.[0]?.id) || "a";
+          const rattacher = (x) => (idsValides.has(x.compteId) ? x : { ...x, compteId: principal });
+          if (Array.isArray(d.trades)) setTrades(d.trades.map(rattacher));
+          if (Array.isArray(d.retraits)) setRetraits(d.retraits.map(rattacher));
           if (d.notes) setNotes(d.notes);
           if (Array.isArray(d.setups) && d.setups.length) setSetups(d.setups);
           if (Array.isArray(d.checklist) && d.checklist.length) setChecklist(d.checklist);
@@ -591,9 +599,43 @@ export default function JournalTrading() {
     }
   };
 
+  const paquet = () => ({ version: 3, date: new Date().toISOString(),
+    comptes, trades, retraits, notes, setups, checklist, gardeFous, coches });
+
+  const appliquerPaquet = (d) => {
+    if (d.comptes?.length) setComptes([{ ...comptesDefaut()[0], ...d.comptes[0] }]);
+    const principal = d.comptes?.[0]?.id || "a";
+    const rattacher = (x) => (x.compteId === principal ? x : { ...x, compteId: principal });
+    if (Array.isArray(d.trades)) setTrades(d.trades.map(rattacher));
+    if (Array.isArray(d.retraits)) setRetraits(d.retraits.map(rattacher));
+    if (d.notes) setNotes(d.notes);
+    if (Array.isArray(d.setups) && d.setups.length) setSetups(d.setups);
+    if (Array.isArray(d.checklist) && d.checklist.length) setChecklist(d.checklist);
+    if (d.gardeFous) setGardeFous({ ...GARDE_FOUS_DEFAUT, ...d.gardeFous });
+    if (d.coches) setCoches(d.coches);
+  };
+
+  const envoyerCloud = async () => {
+    setSync({ etat: "occupe", message: "Envoi en cours…" });
+    try {
+      await envoyer(code, paquet());
+      setSync({ etat: "ok", message: `Envoyé à ${new Date().toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}` });
+    } catch (e) { setSync({ etat: "erreur", message: e.message }); }
+  };
+
+  const recupererCloud = async () => {
+    if (trades.length && !window.confirm("Récupérer remplace ce qui est sur cet appareil par la version en ligne. Continuer ?")) return;
+    setSync({ etat: "occupe", message: "Récupération…" });
+    try {
+      const r = await recuperer(code);
+      if (r.vide) return setSync({ etat: "erreur", message: "Aucune sauvegarde en ligne pour ce code." });
+      appliquerPaquet(r.donnees);
+      setSync({ etat: "ok", message: `Récupéré — version du ${new Date(r.majLe).toLocaleString("fr-FR")}` });
+    } catch (e) { setSync({ etat: "erreur", message: e.message }); }
+  };
+
   const toutExporter = () => {
-    const data = JSON.stringify({ version: 3, date: new Date().toISOString(),
-      comptes, trades, retraits, notes, setups, checklist, gardeFous, coches }, null, 2);
+    const data = JSON.stringify(paquet(), null, 2);
     const url = URL.createObjectURL(new Blob([data], { type: "application/json" }));
     const a = document.createElement("a");
     a.href = url;
@@ -604,16 +646,8 @@ export default function JournalTrading() {
 
   const toutRestaurer = async (fichier) => {
     try {
-      const d = JSON.parse(await fichier.text());
-      if (d.comptes?.length) setComptes(d.comptes.map((c) => ({ ...comptesDefaut()[0], ...c })));
-      if (Array.isArray(d.trades)) setTrades(d.trades);
-      if (Array.isArray(d.retraits)) setRetraits(d.retraits);
-      if (d.notes) setNotes(d.notes);
-      if (Array.isArray(d.setups) && d.setups.length) setSetups(d.setups);
-      if (Array.isArray(d.checklist) && d.checklist.length) setChecklist(d.checklist);
-      if (d.gardeFous) setGardeFous({ ...GARDE_FOUS_DEFAUT, ...d.gardeFous });
-      if (d.coches) setCoches(d.coches);
-      setRapportImport(`Sauvegarde restaurée : ${d.trades?.length || 0} trades.`);
+      appliquerPaquet(JSON.parse(await fichier.text()));
+      setRapportImport("Sauvegarde restaurée.");
     } catch {
       setRapportImport("Fichier de sauvegarde illisible.");
     }
@@ -1285,6 +1319,33 @@ export default function JournalTrading() {
             );
           })}
           <div className="carte">
+            <h3>Synchronisation entre appareils
+              <span className="sous">tablette, téléphone, ordinateur</span></h3>
+            <div className="formulaire">
+              <Champ label="Code de synchronisation" large>
+                <input type="password" value={code} placeholder="Le code défini sur Vercel"
+                  onChange={(e) => { setCode(e.target.value); codeSync.ecrire(e.target.value); }} />
+              </Champ>
+            </div>
+            <div className="sync-actions">
+              <button className="btn primaire" disabled={!code || sync.etat === "occupe"} onClick={envoyerCloud}>
+                Envoyer cet appareil vers le cloud
+              </button>
+              <button className="btn" disabled={!code || sync.etat === "occupe"} onClick={recupererCloud}>
+                Récupérer depuis le cloud
+              </button>
+            </div>
+            {sync.message && (
+              <div className={"sync-etat " + sync.etat}>{sync.message}</div>
+            )}
+            <p className="aide">
+              Une seule sauvegarde en ligne, partagée par tous vos appareils. Envoyez depuis celui où vous
+              venez de travailler, récupérez sur l'autre avant de commencer. Le code reste sur l'appareil
+              et n'est jamais inclus dans la sauvegarde.
+            </p>
+          </div>
+
+          <div className="carte">
             <h3>Stratégies suivies</h3>
             <ListeSetups setups={setups} onChange={setSetups} />
             <p className="aide" style={{ marginTop: 18 }}>
@@ -1854,6 +1915,13 @@ const CSS = `
 .etat-sauve{margin-left:10px;font-family:'IBM Plex Mono',monospace;font-size:11px;padding:2px 8px;border-radius:10px;}
 .etat-sauve.ok{background:#123326;color:#3DD68C;}
 .etat-sauve.ko{background:#331A1A;color:#FF5C5C;}
+
+.sync-actions{display:flex;gap:9px;flex-wrap:wrap;margin-top:14px;}
+.sync-etat{margin-top:12px;padding:10px 13px;border-radius:8px;font-size:12.5px;
+  font-family:'IBM Plex Mono',monospace;}
+.sync-etat.ok{background:#123326;color:#3DD68C;}
+.sync-etat.erreur{background:#331A1A;color:#FF5C5C;}
+.sync-etat.occupe{background:var(--surface2);color:var(--doux);}
 
 .pied{color:var(--creux);font-size:11.5px;margin-top:22px;padding-top:14px;border-top:1px solid var(--bord);line-height:1.6;}
 
