@@ -494,6 +494,7 @@ export default function JournalTrading() {
   const [theme, setTheme] = useState("auto");
   const [systemeSombre, setSystemeSombre] = useState(false);
   const [rapportImport, setRapportImport] = useState("");
+  const [remplacerHistorique, setRemplacerHistorique] = useState(false);
 
   const aujourdhui = new Date().toISOString().slice(0, 10);
 
@@ -640,17 +641,31 @@ export default function JournalTrading() {
       const texte = await fichier.text();
       const { trades: lus, ignores, lus: total } = importerTopstep(texte, compteId, setups[0]);
       const principal = comptes[0].id;
-      const existants = new Set(trades.map((t) => t.id));
-      const nouveaux = lus.filter((t) => !existants.has(t.id)).map((t) => ({ ...t, compteId: principal }));
-      const doublons = lus.length - nouveaux.length;
-      setTrades((p) => [...nouveaux, ...p]);
-      setRapportImport(
-        nouveaux.length
-          ? `${nouveaux.length} trade${nouveaux.length > 1 ? "s" : ""} ajouté${nouveaux.length > 1 ? "s" : ""}` +
-            (doublons ? ` · ${doublons} déjà présent${doublons > 1 ? "s" : ""}` : "") +
-            (ignores ? ` · ${ignores} ligne${ignores > 1 ? "s" : ""} illisible${ignores > 1 ? "s" : ""}` : "")
-          : `Aucun nouveau trade — ${doublons} déjà dans le carnet.`
-      );
+      const rattaches = lus.map((t) => ({ ...t, compteId: principal }));
+
+      if (remplacerHistorique) {
+        /* Le fichier fait autorité : on repart de zéro. C'est le seul moyen
+           sûr d'effacer des trades importés avec d'anciens identifiants. */
+        const avant = trades.length;
+        setTrades(rattaches);
+        setRapportImport(
+          `Historique remplacé : ${rattaches.length} trade${rattaches.length > 1 ? "s" : ""} ` +
+          `(${avant} auparavant)` +
+          (ignores ? ` · ${ignores} ligne${ignores > 1 ? "s" : ""} illisible${ignores > 1 ? "s" : ""}` : "")
+        );
+      } else {
+        const existants = new Set(trades.map((t) => t.id));
+        const nouveaux = rattaches.filter((t) => !existants.has(t.id));
+        const doublons = rattaches.length - nouveaux.length;
+        setTrades((p) => [...nouveaux, ...p]);
+        setRapportImport(
+          nouveaux.length
+            ? `${nouveaux.length} trade${nouveaux.length > 1 ? "s" : ""} ajouté${nouveaux.length > 1 ? "s" : ""}` +
+              (doublons ? ` · ${doublons} déjà présent${doublons > 1 ? "s" : ""}` : "") +
+              (ignores ? ` · ${ignores} ligne${ignores > 1 ? "s" : ""} illisible${ignores > 1 ? "s" : ""}` : "")
+            : `Aucun nouveau trade — ${doublons} déjà dans le carnet.`
+        );
+      }
       setImportEnCours(null);
     } catch (e) {
       setRapportImport("Fichier illisible. Vérifiez qu'il s'agit bien du CSV exporté depuis l'onglet Trades.");
@@ -1326,6 +1341,7 @@ export default function JournalTrading() {
               )}
 
               <div className="recap">
+                <div><em>Trades enregistrés</em><b>{trades.length}</b></div>
                 <div><em>Solde actuel</em><b>{usd(s2.solde, 0)}</b></div>
                 <div><em>Plancher MLL</em><b>{usd(s2.mll, 0)}</b></div>
                 <div><em>Perçu ce mois</em><b className="gain">{usd(percuCeMois, 0)}</b></div>
@@ -1624,13 +1640,21 @@ export default function JournalTrading() {
                   {comptes.map((c) => <option key={c.id} value={c.id}>{c.nom}</option>)}
                 </select>
               </Champ>
+              <label className="case">
+                <input type="checkbox" checked={remplacerHistorique}
+                  onChange={(e) => setRemplacerHistorique(e.target.checked)} />
+                <span>Remplacer tout l'historique par ce fichier</span>
+              </label>
               <Champ label="Fichier CSV" large>
                 <input type="file" accept=".csv,text/csv"
                   onChange={(e) => e.target.files?.[0] && traiterFichier(e.target.files[0], importEnCours)} />
               </Champ>
             </div>
             <p className="aide">
-              Prenez le fichier issu de l'onglet Trades de TopstepX. Les identifiants de trade servent de
+              {remplacerHistorique
+                ? "Vos trades actuels seront effacés et remplacés par le contenu du fichier. À utiliser quand le carnet et TopstepX ne sont plus d'accord."
+                : "Les trades déjà présents sont reconnus par leur identifiant et ne seront pas dupliqués."}
+              {" "}Prenez le fichier issu de l'onglet Trades de TopstepX. Les identifiants de trade servent de
               garde-fou : réimporter le même fichier ne créera pas de doublon. Les commissions et frais
               d'échange sont retranchés du résultat brut, et le stop reste à compléter à la main si vous
               voulez le multiple R.
