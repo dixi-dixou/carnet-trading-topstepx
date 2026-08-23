@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Instrument+Serif&family=Karla:wght@400;500;600&family=DM+Mono:wght@400;500&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap');
 
 * { box-sizing: border-box; }
 
@@ -6,15 +6,20 @@ html, body, #racine {
   margin: 0;
   padding: 0;
   min-height: 100%;
-  background: #F7F6F2;
+  background: #05070C;
 }
 
-@media (prefers-color-scheme: dark) {
-  html, body, #racine { background: #121B1D; }
+@media (prefers-color-scheme: light) {
+  html, body, #racine { background: #F4F6FB; }
 }
 
 body {
-  font-family: 'Karla', system-ui, -apple-system, sans-serif;
-  color: #1B2426;
+  font-family: 'Geist', system-ui, -apple-system, sans-serif;
+  color: #FFFFFF;
   -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
 }
+
+@media (prefers-color-scheme: light) { body { color: #0C1220; } }
+
+::selection { background: rgba(77,141,255,.35); }
