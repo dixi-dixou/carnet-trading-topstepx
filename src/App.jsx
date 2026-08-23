@@ -502,11 +502,71 @@ function Repartition({ titre, lignes }) {
   );
 }
 
+
+/* ------------------------------------------------------------------ */
+/*  Écran d'ouverture                                                  */
+/*  L'arc se trace, la marque s'allume, un éclat balaie l'ensemble,    */
+/*  puis tout s'efface. Une seule fois par lancement.                  */
+/* ------------------------------------------------------------------ */
+function Demarrage({ onFini }) {
+  const [sortie, setSortie] = useState(false);
+
+  useEffect(() => {
+    const reduit = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const duree = reduit ? 700 : 2300;
+    const a = setTimeout(() => setSortie(true), duree);
+    const b = setTimeout(onFini, duree + 500);
+    return () => { clearTimeout(a); clearTimeout(b); };
+  }, [onFini]);
+
+  return (
+    <div className={"intro" + (sortie ? " partir" : "")} onClick={onFini} role="presentation">
+      <div className="intro-aurore"><span /><span /></div>
+      <div className="intro-marque">
+        <svg width="132" height="132" viewBox="0 0 132 132" aria-label="Carnet">
+          <defs>
+            <linearGradient id="intro-arc" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0%" stopColor="#4D8DFF" />
+              <stop offset="55%" stopColor="#9A6BFF" />
+              <stop offset="100%" stopColor="#3FE0D0" />
+            </linearGradient>
+            <filter id="intro-lueur">
+              <feGaussianBlur stdDeviation="4.5" result="f" />
+              <feMerge><feMergeNode in="f" /><feMergeNode in="SourceGraphic" /></feMerge>
+            </filter>
+          </defs>
+          {/* l'anneau se referme */}
+          <circle className="intro-cercle" cx="66" cy="66" r="52" fill="none"
+            stroke="url(#intro-arc)" strokeWidth="4" strokeLinecap="round"
+            filter="url(#intro-lueur)" transform="rotate(-90 66 66)" />
+          {/* trois bougies qui montent */}
+          <g className="intro-barres" filter="url(#intro-lueur)">
+            <rect x="50" y="72" width="7" height="16" rx="2" fill="#4D8DFF" />
+            <rect x="62" y="60" width="7" height="28" rx="2" fill="#9A6BFF" />
+            <rect x="74" y="46" width="7" height="42" rx="2" fill="#3FE0D0" />
+          </g>
+        </svg>
+        <div className="intro-nom">
+          <span>C</span><span>A</span><span>R</span><span>N</span><span>E</span><span>T</span>
+        </div>
+        <p className="intro-sous">Poste de commandement</p>
+      </div>
+    </div>
+  );
+}
+
 /* ------------------------------------------------------------------ */
 /*  Application                                                        */
 /* ------------------------------------------------------------------ */
 export default function JournalTrading() {
   const [pret, setPret] = useState(false);
+  const [intro, setIntro] = useState(() => {
+    try { return !sessionStorage.getItem("carnet-intro-vue"); } catch { return true; }
+  });
+  const finIntro = useCallback(() => {
+    try { sessionStorage.setItem("carnet-intro-vue", "1"); } catch { /* stockage bloqué */ }
+    setIntro(false);
+  }, []);
   const [erreur, setErreur] = useState("");
   const [sauveA, setSauveA] = useState(null);
   const [code, setCode] = useState(() => codeSync.lire());
@@ -807,6 +867,7 @@ export default function JournalTrading() {
   return (
     <div className={"app " + (sombre ? "nuit" : "jour")}>
       <style>{CSS}</style>
+      {intro && <Demarrage onFini={finIntro} />}
       <div className="aurore" aria-hidden="true">
         <span className="masse m1" /><span className="masse m2" /><span className="masse m3" />
       </div>
@@ -2204,6 +2265,65 @@ const CSS = `
 
 .pied{color:var(--creux);font-size:12px;margin-top:28px;padding-top:18px;
   border-top:1px solid var(--bord);line-height:1.7;max-width:66ch;}
+
+
+/* ── Écran d'ouverture ── */
+.intro{position:fixed;inset:0;z-index:200;background:#05070C;display:flex;
+  align-items:center;justify-content:center;overflow:hidden;cursor:pointer;
+  transition:opacity .5s ease,transform .5s ease;}
+.intro.partir{opacity:0;transform:scale(1.06);pointer-events:none;}
+.intro-aurore{position:absolute;inset:-20%;filter:blur(120px);opacity:.55;}
+.intro-aurore span{position:absolute;border-radius:50%;mix-blend-mode:screen;display:block;}
+.intro-aurore span:first-child{width:60vw;height:60vw;background:#1D4ED8;top:-10%;left:-8%;
+  animation:introSouffle 3.4s ease-out both;}
+.intro-aurore span:last-child{width:50vw;height:50vw;background:#7C3AED;bottom:-14%;right:-6%;
+  animation:introSouffle 3.4s .2s ease-out both;}
+@keyframes introSouffle{from{opacity:0;transform:scale(.6);}to{opacity:1;transform:scale(1);}}
+
+.intro-marque{position:relative;text-align:center;}
+.intro-cercle{stroke-dasharray:327;stroke-dashoffset:327;
+  animation:introTrait 1.15s cubic-bezier(.5,0,.2,1) .15s forwards;}
+@keyframes introTrait{to{stroke-dashoffset:0;}}
+.intro-barres rect{transform-origin:center bottom;transform:scaleY(0);opacity:0;}
+.intro-barres rect:nth-child(1){animation:introMonte .5s cubic-bezier(.2,.9,.2,1) .75s forwards;}
+.intro-barres rect:nth-child(2){animation:introMonte .5s cubic-bezier(.2,.9,.2,1) .88s forwards;}
+.intro-barres rect:nth-child(3){animation:introMonte .5s cubic-bezier(.2,.9,.2,1) 1.01s forwards;}
+@keyframes introMonte{from{transform:scaleY(0);opacity:0;}to{transform:scaleY(1);opacity:1;}}
+
+.intro-nom{margin-top:26px;display:flex;justify-content:center;gap:.34em;
+  font-family:'Geist',sans-serif;font-size:27px;font-weight:600;letter-spacing:.24em;
+  color:#fff;padding-left:.24em;}
+.intro-nom span{opacity:0;filter:blur(9px);display:inline-block;
+  animation:introLettre .55s cubic-bezier(.2,.8,.2,1) forwards;}
+.intro-nom span:nth-child(1){animation-delay:1.15s;}
+.intro-nom span:nth-child(2){animation-delay:1.23s;}
+.intro-nom span:nth-child(3){animation-delay:1.31s;}
+.intro-nom span:nth-child(4){animation-delay:1.39s;}
+.intro-nom span:nth-child(5){animation-delay:1.47s;}
+.intro-nom span:nth-child(6){animation-delay:1.55s;}
+@keyframes introLettre{
+  from{opacity:0;filter:blur(9px);transform:translateY(9px);}
+  to{opacity:1;filter:blur(0);transform:none;}
+}
+.intro-sous{margin:12px 0 0;font-family:'Geist Mono',monospace;font-size:10.5px;
+  letter-spacing:.22em;text-transform:uppercase;color:#93A0B6;opacity:0;
+  animation:introFondu .7s ease 1.75s forwards;}
+@keyframes introFondu{to{opacity:1;}}
+
+/* l'éclat qui balaie la marque */
+.intro-marque::after{content:"";position:absolute;top:-30%;bottom:-30%;width:36%;
+  left:-45%;pointer-events:none;transform:skewX(-18deg);
+  background:linear-gradient(90deg,transparent,rgba(255,255,255,.5),transparent);
+  animation:introEclat 1.1s cubic-bezier(.4,0,.3,1) 1.35s;}
+@keyframes introEclat{to{left:115%;}}
+
+@media (prefers-reduced-motion:reduce){
+  .intro *{animation:none!important;}
+  .intro-cercle{stroke-dashoffset:0;}
+  .intro-barres rect{transform:none;opacity:1;}
+  .intro-nom span,.intro-sous{opacity:1;filter:none;}
+  .intro-marque::after{display:none;}
+}
 
 @media (prefers-reduced-motion:reduce){.app *{animation:none!important;transition:none!important;}}
 @media (max-width:640px){
