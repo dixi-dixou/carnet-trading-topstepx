@@ -527,11 +527,12 @@ export default function JournalTrading() {
         if (r && r.value) {
           const d = JSON.parse(r.value);
           if (d.comptes?.length) setComptes([{ ...comptesDefaut()[0], ...d.comptes[0] }]);
-          /* Reprise d'une sauvegarde à deux comptes : les trades et retraits
-             orphelins sont rattachés au compte restant plutôt que perdus. */
-          const idsValides = new Set((d.comptes?.length ? d.comptes : comptesDefaut()).map((c) => c.id));
+          /* Le carnet ne gère qu'un compte : tout trade lui est rattaché,
+             y compris ceux qui venaient d'une ancienne configuration à deux
+             comptes. Sans ça, ils resteraient visibles dans la liste mais
+             absents du solde. */
           const principal = (d.comptes?.[0]?.id) || "a";
-          const rattacher = (x) => (idsValides.has(x.compteId) ? x : { ...x, compteId: principal });
+          const rattacher = (x) => (x.compteId === principal ? x : { ...x, compteId: principal });
           if (Array.isArray(d.trades)) setTrades(d.trades.map(rattacher));
           if (Array.isArray(d.retraits)) setRetraits(d.retraits.map(rattacher));
           if (d.notes) setNotes(d.notes);
@@ -638,8 +639,9 @@ export default function JournalTrading() {
     try {
       const texte = await fichier.text();
       const { trades: lus, ignores, lus: total } = importerTopstep(texte, compteId, setups[0]);
+      const principal = comptes[0].id;
       const existants = new Set(trades.map((t) => t.id));
-      const nouveaux = lus.filter((t) => !existants.has(t.id));
+      const nouveaux = lus.filter((t) => !existants.has(t.id)).map((t) => ({ ...t, compteId: principal }));
       const doublons = lus.length - nouveaux.length;
       setTrades((p) => [...nouveaux, ...p]);
       setRapportImport(
@@ -735,6 +737,13 @@ export default function JournalTrading() {
   });
 
   const cpt = comptes[0];
+  /* Un trade qui n'appartient pas au compte apparaît dans la liste mais
+     jamais dans le solde : on le signale plutôt que de laisser un écart. */
+  const orphelins = enrichis.filter((t) => t.compteId !== cpt.id).length;
+  const reparerRattachement = () => {
+    setTrades((p) => p.map((t) => ({ ...t, compteId: cpt.id })));
+    setRetraits((p) => p.map((r) => ({ ...r, compteId: cpt.id })));
+  };
   const objectifMensuel = cpt.retraitBrut * (cpt.split / 100) * cpt.retraitsParMois;
 
   return (
@@ -1307,6 +1316,14 @@ export default function JournalTrading() {
                   valeur={percuCeMois} total={netParRetrait * c.retraitsParMois}
                   texte={usd(percuCeMois, 0)} />
               </div>
+
+              {orphelins > 0 && (
+                <div className="alerte" style={{ marginBottom: 16 }}>
+                  {orphelins} trade{orphelins > 1 ? "s ne sont" : " n'est"} pas rattaché{orphelins > 1 ? "s" : ""} au compte
+                  et manque{orphelins > 1 ? "nt" : ""} donc au solde.{" "}
+                  <button className="lien" onClick={reparerRattachement}>Tout rattacher</button>
+                </div>
+              )}
 
               <div className="recap">
                 <div><em>Solde actuel</em><b>{usd(s2.solde, 0)}</b></div>
