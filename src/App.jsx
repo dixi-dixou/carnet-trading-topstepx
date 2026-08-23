@@ -73,7 +73,7 @@ const GARDE_FOUS_DEFAUT = { maxTrades: 4, maxMicrosJour: 10, maxPertesSuite: 2, 
 const comptesDefaut = () => ([
   { id: "a", nom: "Compte principal", type: "Express Funded", preset: "50K",
     mll: 2000, dll: 1000, maxContrats: 50, plafond: 5000, commissionAR: 1.22,
-    chemin: "Standard", seuilJour: 150, split: 90, couleur: "#F2A03D",
+    chemin: "Standard", seuilJour: 150, split: 90, couleur: "#C9A961",
     /* Objectifs, tous modifiables dans l'onglet Objectifs */
     retraitBrut: 1000, retraitsParMois: 2, soldeCible: 3000, jalonMll: 2000 },
 ]);
@@ -311,6 +311,46 @@ function importerTopstep(texte, compteId, setupParDefaut) {
   return { trades, ignores, lus: brut.length };
 }
 
+
+/* ------------------------------------------------------------------ */
+/*  La barre de souffle : une phrase, jamais un chiffre.               */
+/*  Elle dit ce qui gouverne maintenant, pas ce qui s'est passé.       */
+/* ------------------------------------------------------------------ */
+const PRINCIPES = [
+  "Le balayage doit avoir eu lieu, pas être anticipé.",
+  "Si je ne peux pas le dire en une phrase, le trade n'existe pas.",
+  "Attendre est une position.",
+  "Le marché ouvre demain. Le compte, seulement si je le garde.",
+  "Une séance sans setup est une séance réussie.",
+];
+
+function principeDuMoment({ verrouActif, seance, prepFaite, jourIso }) {
+  if (verrouActif)
+    return { texte: "La journée est close. C'est vous qui l'avez décidé.", ton: "clos" };
+  if (seance.niveau === "stop")
+    return { texte: "On ne récupère pas une perte. On récupère un état.", ton: "arret" };
+  if (seance.suite >= 1)
+    return { texte: "Une perte n'appelle pas un trade. Elle appelle une pause.", ton: "arret" };
+  if (seance.objectifAtteint)
+    return { texte: "La journée gagnante est acquise. La garder est un trade.", ton: "garde" };
+  if (!prepFaite)
+    return { texte: "Le plan d'abord. Le graphique ensuite.", ton: "calme" };
+  const jours = Math.floor(new Date(jourIso).getTime() / 864e5);
+  return { texte: PRINCIPES[jours % PRINCIPES.length], ton: "calme" };
+}
+
+function BarreSouffle({ principe, seance, gardeFous }) {
+  return (
+    <div className={"souffle " + principe.ton}>
+      <span className="souffle-point" aria-hidden="true" />
+      <p className="souffle-mot">{principe.texte}</p>
+      <span className="souffle-etat">
+        {seance.micros}/{gardeFous.maxMicrosJour} micros engagés
+      </span>
+    </div>
+  );
+}
+
 /* ------------------------------------------------------------------ */
 /*  Éléments d'interface                                               */
 /* ------------------------------------------------------------------ */
@@ -332,8 +372,8 @@ const Champ = ({ label, children, large }) => (
 const Jauge = ({ label, valeur, total, texte, inverse }) => {
   const r = total > 0 ? Math.max(0, Math.min(1, valeur / total)) : 0;
   const couleur = inverse
-    ? (r > 0.5 ? "#3DD68C" : r > 0.25 ? "#F2A03D" : "#FF5C5C")
-    : (r >= 1 ? "#3DD68C" : "#F2A03D");
+    ? (r > 0.5 ? "#7FA88A" : r > 0.25 ? "#C9A961" : "#C4756B")
+    : (r >= 1 ? "#7FA88A" : "#C9A961");
   return (
     <div className="jauge">
       <div className="jauge-tete"><span>{label}</span><b style={{ color: couleur }}>{texte}</b></div>
@@ -364,7 +404,7 @@ function LigneDeVie({ compte, s }) {
         <div className="rail-fond" />
         <div className="rail-zone" style={{
           left: pos(s.mll) + "%", width: Math.max(0, pos(s.solde) - pos(s.mll)) + "%",
-          background: `linear-gradient(90deg, ${danger ? "#FF5C5C" : "#3DD68C"}22, ${danger ? "#FF5C5C" : "#3DD68C"}66)`
+          background: `linear-gradient(90deg, ${danger ? "#C4756B" : "#7FA88A"}33, ${danger ? "#C4756B" : "#7FA88A"}99)`
         }} />
         <div className="rail-marque seuil" style={{ left: pos(s.mll) + "%" }} />
         <div className="rail-marque cible" style={{ left: pos(s.soldeRequis) + "%" }} />
@@ -410,7 +450,7 @@ function Repartition({ titre, lignes }) {
               <td className="col-barre">
                 <div className="mini"><div className="mini-b" style={{
                   width: (Math.abs(l.pnl) / maxAbs) * 100 + "%",
-                  background: l.pnl >= 0 ? "#3DD68C" : "#FF5C5C",
+                  background: l.pnl >= 0 ? "#7FA88A" : "#C4756B",
                 }} /></div>
               </td>
             </tr>
@@ -670,6 +710,13 @@ export default function JournalTrading() {
   const compteEdite = edition ? comptes.find((c) => c.id === edition.compteId) : null;
   const apercuPnl = edition ? calculPnl(edition) : 0;
   const apercuRisque = edition ? risqueInitial(edition) : 0;
+  const tradesDuJour = enrichis.filter((t) => jour(t.date) === aujourdhui);
+  const seanceDuJour = etatSeance(tradesDuJour, gardeFous);
+  const prepDuJour = !!(notes[aujourdhui]?.fond && notes[aujourdhui]?.asie);
+  const principe = principeDuMoment({
+    verrouActif, seance: seanceDuJour, prepFaite: prepDuJour, jourIso: aujourdhui,
+  });
+
   const cpt = comptes[0];
   const objectifMensuel = cpt.retraitBrut * (cpt.split / 100) * cpt.retraitsParMois;
 
@@ -720,6 +767,8 @@ export default function JournalTrading() {
           }}>Rouvrir</button>
         </div>
       )}
+
+      <BarreSouffle principe={principe} seance={seanceDuJour} gardeFous={gardeFous} />
 
       <nav className="onglets" role="tablist">
         {[["bord", "Tableau de bord"], ["retraits", "Retraits"], ["trades", "Trades"],
@@ -787,12 +836,12 @@ export default function JournalTrading() {
               {st.equity.length ? (
                 <ResponsiveContainer width="100%" height={260}>
                   <LineChart data={st.equity} margin={{ top: 8, right: 8, left: -12, bottom: 0 }}>
-                    <CartesianGrid stroke="#1E2733" vertical={false} />
-                    <XAxis dataKey="i" stroke="#5C6B7E" fontSize={11} tickLine={false} axisLine={false} />
-                    <YAxis stroke="#5C6B7E" fontSize={11} tickLine={false} axisLine={false} />
+                    <CartesianGrid stroke="#293A3D" vertical={false} />
+                    <XAxis dataKey="i" stroke="#657677" fontSize={11} tickLine={false} axisLine={false} />
+                    <YAxis stroke="#657677" fontSize={11} tickLine={false} axisLine={false} />
                     <Tooltip content={<Info suffixe="Trade" />} />
-                    <ReferenceLine y={0} stroke="#2C3846" />
-                    <Line type="monotone" dataKey="cumul" stroke="#F2A03D" strokeWidth={2} dot={false} />
+                    <ReferenceLine y={0} stroke="#293A3D" />
+                    <Line type="monotone" dataKey="cumul" stroke="#C9A961" strokeWidth={1.5} dot={false} />
                   </LineChart>
                 </ResponsiveContainer>
               ) : <p className="vide">Saisissez un premier trade pour voir la courbe se dessiner.</p>}
@@ -803,16 +852,16 @@ export default function JournalTrading() {
               {st.parJour.length ? (
                 <ResponsiveContainer width="100%" height={260}>
                   <BarChart data={st.parJour} margin={{ top: 8, right: 8, left: -12, bottom: 0 }}>
-                    <CartesianGrid stroke="#1E2733" vertical={false} />
-                    <XAxis dataKey="date" stroke="#5C6B7E" fontSize={10} tickLine={false} axisLine={false}
+                    <CartesianGrid stroke="#293A3D" vertical={false} />
+                    <XAxis dataKey="date" stroke="#657677" fontSize={10} tickLine={false} axisLine={false}
                       tickFormatter={(d) => d.slice(5)} />
-                    <YAxis stroke="#5C6B7E" fontSize={11} tickLine={false} axisLine={false} />
+                    <YAxis stroke="#657677" fontSize={11} tickLine={false} axisLine={false} />
                     <Tooltip content={<Info suffixe="Séance" />} />
-                    <ReferenceLine y={0} stroke="#2C3846" />
-                    <ReferenceLine y={comptes[0].seuilJour} stroke="#F2A03D" strokeDasharray="4 4" />
+                    <ReferenceLine y={0} stroke="#293A3D" />
+                    <ReferenceLine y={comptes[0].seuilJour} stroke="#C9A961" strokeDasharray="3 5" />
                     <Bar dataKey="pnl" radius={[2, 2, 0, 0]}>
                       {st.parJour.map((d, i) => (
-                        <Cell key={i} fill={d.pnl >= comptes[0].seuilJour ? "#3DD68C" : d.pnl >= 0 ? "#2A6B4C" : "#FF5C5C"} />
+                        <Cell key={i} fill={d.pnl >= comptes[0].seuilJour ? "#7FA88A" : d.pnl >= 0 ? "#3F5A4A" : "#C4756B"} />
                       ))}
                     </Bar>
                   </BarChart>
@@ -962,9 +1011,8 @@ export default function JournalTrading() {
         const setCoche = (id, v) => setCoches({ ...coches, [aujourdhui]: { ...cochesJour, [id]: v } });
         const faits = checklist.filter((c) => cochesJour[c.id]).length;
         const complet = faits === checklist.length;
-        const tradesJour = enrichis.filter((t) => jour(t.date) === aujourdhui);
-        const seance = etatSeance(tradesJour, gardeFous);
-        const prepFaite = !!(note.fond && note.asie);
+        const seance = seanceDuJour;
+        const prepFaite = prepDuJour;
 
         return (
         <>
@@ -1043,7 +1091,7 @@ export default function JournalTrading() {
               </Champ>
             </div>
             {(num(note.sommeil || 3) <= 2 || num(note.calme || 3) <= 2) && (
-              <p className="aide" style={{ color: "#F2A03D" }}>
+              <p className="aide" style={{ color: "#C9A961" }}>
                 Nuit courte ou tête ailleurs : c'est le profil de journée où l'on prend les trades qu'on regrette.
                 Taille réduite, ou pas de trade du tout.
               </p>
@@ -1056,7 +1104,7 @@ export default function JournalTrading() {
             <div className="jauge-piste" style={{ marginBottom: 16 }}>
               <div className="jauge-barre" style={{
                 width: (faits / checklist.length) * 100 + "%",
-                background: complet ? "#3DD68C" : "#F2A03D"
+                background: complet ? "#7FA88A" : "#C9A961"
               }} />
             </div>
 
@@ -1510,7 +1558,7 @@ export default function JournalTrading() {
                 <div><em>Marge restante</em><b className="perte">{usd(Math.max(0, s.solde - num(nouveauRetrait.brut)), 0)}</b></div>
               </div>
               {num(nouveauRetrait.brut) > s.demandable && (
-                <p className="aide" style={{ color: "#F2A03D" }}>
+                <p className="aide" style={{ color: "#C9A961" }}>
                   Ce montant dépasse la limite des 50 % du solde ou le plafond par demande.
                 </p>
               )}
@@ -1571,7 +1619,7 @@ export default function JournalTrading() {
               <div className="jauge-piste">
                 <div className="jauge-barre" style={{
                   width: (1 - secondesRestantes / (gardeFous.pauseMinutes * 60)) * 100 + "%",
-                  background: secondesRestantes ? "#F2A03D" : "#3DD68C",
+                  background: secondesRestantes ? "#C9A961" : "#7FA88A",
                 }} />
               </div>
             </div>
@@ -1602,7 +1650,7 @@ export default function JournalTrading() {
             </div>
 
             {pause.reponses.etat && pause.reponses.etat !== "Calme — la perte fait partie du métier" && (
-              <p className="aide" style={{ color: "#FF5C5C" }}>
+              <p className="aide" style={{ color: "#C4756B" }}>
                 Vous venez de nommer l'état exact dans lequel les comptes se vident. Le trade que vous
                 cherchez n'est pas sur le graphique.
               </p>
@@ -1693,242 +1741,310 @@ function ListeSetups({ setups, onChange }) {
 
 /* ------------------------------------------------------------------ */
 const CSS = `
+/* ------------------------------------------------------------------ *
+ *  Encre & Souffle
+ *
+ *  Fond bleu-vert profond, texte papier chaud, laiton en accent rare.
+ *  Les couleurs d'argent sont volontairement désaturées : un gain sage
+ *  et une perte terre cuite. Un rouge d'alarme déclenche exactement le
+ *  réflexe que ce carnet cherche à interrompre.
+ * ------------------------------------------------------------------ */
 
 .app {
-  --fond:#0A0D12; --surface:#111821; --surface2:#161F2B; --bord:#1E2733;
-  --texte:#E4EAF2; --doux:#8695A8; --creux:#5C6B7E;
-  --ambre:#F2A03D; --gain:#3DD68C; --perte:#FF5C5C;
-  background:var(--fond); color:var(--texte); min-height:100vh; padding:22px;
-  font-family:'Inter',system-ui,sans-serif; font-size:14px;
+  --encre:#111A1C; --ardoise:#182325; --brume:#202E30; --trait:#293A3D;
+  --papier:#E6E2D8; --estompe:#93A0A0; --creux:#657677;
+  --laiton:#C9A961; --gain:#7FA88A; --perte:#C4756B;
+
+  background:var(--encre); color:var(--papier); min-height:100vh; padding:26px;
+  font-family:'Karla',system-ui,sans-serif; font-size:14.5px; line-height:1.5;
 }
 .app * { box-sizing:border-box; }
-.app h1,.app h2,.app h3 { font-family:'Space Grotesk','Inter',sans-serif; margin:0; letter-spacing:-.02em; }
-.mono,.app input,.app select,.app textarea { font-family:'IBM Plex Mono',ui-monospace,monospace; }
+.app h1,.app h2 { font-family:'Instrument Serif',Georgia,serif; margin:0;
+  font-weight:400; letter-spacing:-.01em; }
+.app h3,.app h4 { font-family:'Karla',sans-serif; margin:0; font-weight:600; }
+.mono,.app input,.app select,.app textarea { font-family:'DM Mono',ui-monospace,monospace; }
 .gain{color:var(--gain);} .perte{color:var(--perte);} .fort{font-weight:600;}
 .nowrap{white-space:nowrap;} .creux{color:var(--creux);}
-.app button:focus-visible,.app input:focus-visible,.app select:focus-visible,.app textarea:focus-visible{
-  outline:2px solid var(--ambre); outline-offset:2px;
-}
-@media (prefers-reduced-motion:reduce){ .app *{transition:none!important;} }
-.chargement{color:var(--doux);padding:60px;text-align:center;font-family:'IBM Plex Mono',monospace;}
+.app button:focus-visible,.app input:focus-visible,.app select:focus-visible,
+.app textarea:focus-visible,.app label:focus-within{ outline:2px solid var(--laiton); outline-offset:3px; }
+.chargement{color:var(--estompe);padding:80px;text-align:center;font-family:'Instrument Serif',serif;font-size:19px;}
 
-.tete{display:flex;justify-content:space-between;align-items:flex-end;gap:16px;flex-wrap:wrap;
-  padding-bottom:16px;border-bottom:1px solid var(--bord);margin-bottom:18px;}
-.tete h1{font-size:26px;font-weight:700;}
-.titre p{margin:4px 0 0;color:var(--doux);font-size:13px;}
+/* --- En-tête --- */
+.tete{display:flex;justify-content:space-between;align-items:flex-end;gap:18px;flex-wrap:wrap;
+  padding-bottom:18px;margin-bottom:20px;border-bottom:1px solid var(--trait);}
+.tete h1{font-size:31px;}
+.titre p{margin:5px 0 0;color:var(--estompe);font-size:13px;}
 .tete-actions{display:flex;gap:8px;flex-wrap:wrap;}
 
-.btn{background:var(--surface2);color:var(--texte);border:1px solid var(--bord);border-radius:8px;
-  padding:9px 14px;font-size:13px;font-weight:500;cursor:pointer;font-family:'Inter',sans-serif;transition:.15s;}
-.btn:hover{border-color:var(--creux);}
-.btn.primaire{background:var(--ambre);color:#100C05;border-color:var(--ambre);font-weight:600;}
-.btn.primaire:hover{filter:brightness(1.1);}
-.btn:disabled{opacity:.4;cursor:not-allowed;}
-.btn.pleine{width:100%;margin-top:14px;}
+.btn{background:transparent;color:var(--papier);border:1px solid var(--trait);border-radius:3px;
+  padding:9px 15px;font-size:13px;font-weight:500;cursor:pointer;font-family:'Karla',sans-serif;
+  transition:border-color .2s,background .2s;}
+.btn:hover{border-color:var(--estompe);background:var(--ardoise);}
+.btn.primaire{background:var(--laiton);color:#141005;border-color:var(--laiton);font-weight:700;}
+.btn.primaire:hover{background:#D8B876;}
+.btn:disabled{opacity:.35;cursor:not-allowed;}
+.btn.pleine{width:100%;margin-top:16px;}
+.btn.danger-plein{background:transparent;border-color:#5E3833;color:var(--perte);}
+.btn.danger-plein:hover{background:#2A1D1B;}
 
-.alerte{background:#3A1A1A;border:1px solid #6B2B2B;color:#FFB4B4;padding:10px 14px;border-radius:8px;margin-bottom:14px;font-size:13px;}
+/* --- Signature : la barre de souffle --- */
+.souffle{display:flex;align-items:center;gap:16px;padding:15px 20px;margin-bottom:20px;
+  background:var(--ardoise);border:1px solid var(--trait);border-radius:3px;
+  border-left:2px solid var(--laiton);}
+.souffle.arret{border-left-color:var(--perte);}
+.souffle.garde{border-left-color:var(--gain);}
+.souffle.clos{border-left-color:var(--creux);}
+.souffle-mot{flex:1;margin:0;font-family:'Instrument Serif',Georgia,serif;font-size:19px;
+  font-style:italic;letter-spacing:.005em;color:var(--papier);}
+.souffle-etat{font-family:'DM Mono',monospace;font-size:11px;color:var(--creux);
+  white-space:nowrap;letter-spacing:.03em;}
+.souffle-point{width:9px;height:9px;border-radius:50%;background:var(--laiton);flex-shrink:0;
+  animation:souffler 5.5s ease-in-out infinite;}
+.souffle.arret .souffle-point{background:var(--perte);}
+.souffle.garde .souffle-point{background:var(--gain);}
+.souffle.clos .souffle-point{background:var(--creux);animation:none;}
+@keyframes souffler{0%,100%{transform:scale(.7);opacity:.45;}50%{transform:scale(1.25);opacity:1;}}
+@media (prefers-reduced-motion:reduce){
+  .app *{transition:none!important;animation:none!important;}
+  .souffle-point{opacity:.9;}
+}
 
-.onglets{display:flex;gap:4px;overflow-x:auto;margin-bottom:14px;}
-.onglet{background:none;border:none;border-bottom:2px solid transparent;color:var(--doux);
-  padding:8px 14px;cursor:pointer;font-size:13px;font-weight:500;white-space:nowrap;font-family:'Inter',sans-serif;}
-.onglet.actif{color:var(--ambre);border-bottom-color:var(--ambre);}
+.alerte{background:#2A1D1B;border:1px solid #5E3833;color:#E8B5AD;padding:11px 16px;
+  border-radius:3px;margin-bottom:14px;font-size:13px;}
+.alerte.douce{background:#241F14;border-color:#4A3F22;color:#DFC98D;}
 
-.filtres{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:18px;}
-.segment{display:flex;background:var(--surface);border:1px solid var(--bord);border-radius:8px;padding:3px;}
-.segment button{background:none;border:none;color:var(--doux);padding:6px 12px;border-radius:6px;
-  cursor:pointer;font-size:12.5px;display:flex;align-items:center;gap:6px;font-family:'Inter',sans-serif;}
-.segment button.actif{background:var(--surface2);color:var(--texte);}
-.app select,.app input,.app textarea{background:var(--surface);border:1px solid var(--bord);color:var(--texte);
-  border-radius:8px;padding:8px 10px;font-size:13px;}
-.recherche{flex:1;min-width:160px;}
-.pastille{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:7px;vertical-align:middle;}
+/* --- Navigation --- */
+.onglets{display:flex;gap:2px;overflow-x:auto;margin-bottom:18px;border-bottom:1px solid var(--trait);}
+.onglet{background:none;border:none;border-bottom:2px solid transparent;color:var(--creux);
+  padding:9px 16px;margin-bottom:-1px;cursor:pointer;font-size:13px;font-weight:600;
+  white-space:nowrap;font-family:'Karla',sans-serif;letter-spacing:.01em;}
+.onglet:hover{color:var(--estompe);}
+.onglet.actif{color:var(--laiton);border-bottom-color:var(--laiton);}
 
-.vies{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:14px;margin-bottom:14px;}
-.vie{background:var(--surface);border:1px solid var(--bord);border-radius:12px;padding:16px 18px;}
-.vie-tete{display:flex;justify-content:space-between;align-items:center;margin-bottom:22px;}
-.vie-tete strong{font-family:'Space Grotesk',sans-serif;font-size:15px;}
-.tag{color:var(--creux);font-size:11px;margin-left:8px;text-transform:uppercase;letter-spacing:.06em;}
-.vie-solde{font-family:'IBM Plex Mono',monospace;font-size:20px;font-weight:600;}
+.filtres{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:20px;}
+.segment{display:flex;background:var(--ardoise);border:1px solid var(--trait);border-radius:3px;padding:3px;}
+.segment button{background:none;border:none;color:var(--creux);padding:6px 13px;border-radius:2px;
+  cursor:pointer;font-size:12.5px;display:flex;align-items:center;gap:6px;font-family:'Karla',sans-serif;}
+.segment button.actif{background:var(--brume);color:var(--papier);}
+.app select,.app input,.app textarea{background:var(--ardoise);border:1px solid var(--trait);
+  color:var(--papier);border-radius:3px;padding:9px 11px;font-size:13px;}
+.app textarea{line-height:1.55;}
+.recherche{flex:1;min-width:170px;}
+.pastille{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:7px;vertical-align:middle;}
 
-.rail{position:relative;height:34px;margin-bottom:6px;}
-.rail-fond{position:absolute;top:15px;left:0;right:0;height:3px;background:var(--surface2);border-radius:2px;}
-.rail-zone{position:absolute;top:15px;height:3px;border-radius:2px;}
-.rail-marque{position:absolute;top:8px;width:1px;height:17px;background:var(--creux);}
-.rail-marque.seuil{background:var(--perte);height:22px;top:6px;}
-.rail-marque.cible{background:var(--gain);height:22px;top:6px;}
-.rail-curseur{position:absolute;top:10px;width:12px;height:12px;border-radius:50%;background:var(--fond);
-  border:3px solid;transform:translateX(-6px);}
-.vie-legende{display:flex;justify-content:space-between;font-family:'IBM Plex Mono',monospace;font-size:11px;
-  color:var(--doux);margin-bottom:16px;gap:8px;}
-.vie-legende em{display:block;color:var(--creux);font-style:normal;font-size:10px;text-transform:uppercase;
-  letter-spacing:.05em;margin-bottom:2px;}
+/* --- Compte : la ligne de vie --- */
+.vies{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:16px;margin-bottom:16px;}
+.vie{background:var(--ardoise);border:1px solid var(--trait);border-radius:3px;padding:20px 22px;}
+.vie-tete{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:26px;}
+.vie-tete strong{font-family:'Karla',sans-serif;font-size:14px;font-weight:600;}
+.tag{color:var(--creux);font-size:10.5px;margin-left:9px;text-transform:uppercase;letter-spacing:.09em;}
+.vie-solde{font-family:'DM Mono',monospace;font-size:23px;font-weight:500;letter-spacing:-.01em;}
+
+.rail{position:relative;height:32px;margin-bottom:8px;}
+.rail-fond{position:absolute;top:15px;left:0;right:0;height:1px;background:var(--trait);}
+.rail-zone{position:absolute;top:14px;height:3px;}
+.rail-marque{position:absolute;top:9px;width:1px;height:14px;background:var(--creux);}
+.rail-marque.seuil{background:var(--perte);height:20px;top:6px;}
+.rail-marque.cible{background:var(--gain);height:20px;top:6px;}
+.rail-curseur{position:absolute;top:10px;width:11px;height:11px;border-radius:50%;
+  background:var(--encre);border:2px solid;transform:translateX(-5.5px);}
+.vie-legende{display:flex;justify-content:space-between;font-family:'DM Mono',monospace;
+  font-size:11px;color:var(--estompe);margin-bottom:20px;gap:10px;}
+.vie-legende em{display:block;color:var(--creux);font-style:normal;font-size:9.5px;
+  text-transform:uppercase;letter-spacing:.08em;margin-bottom:3px;font-family:'Karla',sans-serif;}
 .vie-legende span:nth-child(2){text-align:center;} .vie-legende span:last-child{text-align:right;}
-.verrou{color:var(--gain);font-weight:400;font-size:10px;}
+.verrou{color:var(--gain);font-weight:400;font-size:9.5px;}
 
-.vie-jauges{display:flex;flex-direction:column;gap:10px;}
-.jauge-tete{display:flex;justify-content:space-between;font-size:11.5px;color:var(--doux);margin-bottom:5px;gap:8px;}
-.jauge-tete b{font-family:'IBM Plex Mono',monospace;white-space:nowrap;}
-.jauge-piste{height:5px;background:var(--surface2);border-radius:3px;overflow:hidden;}
-.jauge-barre{height:100%;border-radius:3px;transition:width .3s;}
+.vie-jauges{display:flex;flex-direction:column;gap:12px;}
+.jauge-tete{display:flex;justify-content:space-between;font-size:11.5px;color:var(--estompe);
+  margin-bottom:6px;gap:10px;}
+.jauge-tete b{font-family:'DM Mono',monospace;white-space:nowrap;font-weight:500;}
+.jauge-piste{height:2px;background:var(--trait);overflow:hidden;}
+.jauge-barre{height:100%;transition:width .4s ease;}
 
-.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin-bottom:14px;}
-.kpi{background:var(--surface);border:1px solid var(--bord);border-radius:10px;padding:13px 15px;display:flex;flex-direction:column;gap:3px;}
-.kpi-l{font-size:11px;color:var(--creux);text-transform:uppercase;letter-spacing:.06em;}
-.kpi-v{font-family:'IBM Plex Mono',monospace;font-size:20px;font-weight:600;}
-.kpi-s{font-size:11.5px;color:var(--doux);}
+/* --- Indicateurs --- */
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(158px,1fr));gap:1px;
+  margin-bottom:16px;background:var(--trait);border:1px solid var(--trait);}
+.kpi{background:var(--ardoise);padding:15px 17px;display:flex;flex-direction:column;gap:4px;}
+.kpi-l{font-size:10px;color:var(--creux);text-transform:uppercase;letter-spacing:.1em;font-weight:600;}
+.kpi-v{font-family:'DM Mono',monospace;font-size:21px;font-weight:500;letter-spacing:-.02em;}
+.kpi-s{font-size:11.5px;color:var(--estompe);}
 
-.grille2{display:grid;grid-template-columns:repeat(auto-fit,minmax(400px,1fr));gap:14px;}
-.carte{background:var(--surface);border:1px solid var(--bord);border-radius:12px;padding:16px 18px;margin-bottom:14px;}
-.carte h3{font-size:14px;font-weight:500;margin-bottom:14px;}
-.carte h3 .sous{color:var(--creux);font-weight:400;font-size:12px;margin-left:8px;font-family:'Inter',sans-serif;}
-.vide{color:var(--creux);font-size:13px;padding:26px 0;text-align:center;}
+.grille2{display:grid;grid-template-columns:repeat(auto-fit,minmax(400px,1fr));gap:16px;}
+.carte{background:var(--ardoise);border:1px solid var(--trait);border-radius:3px;
+  padding:20px 22px;margin-bottom:16px;}
+.carte h3{font-size:13px;margin-bottom:16px;letter-spacing:.01em;}
+.carte h3 .sous{color:var(--creux);font-weight:400;font-size:12px;margin-left:9px;}
+.vide{color:var(--creux);font-size:13px;padding:30px 0;text-align:center;
+  font-family:'Instrument Serif',serif;font-style:italic;font-size:15px;}
 
-.etapes{display:flex;flex-direction:column;gap:12px;margin-bottom:18px;}
-.etape{display:flex;gap:11px;align-items:flex-start;}
-.coche{width:20px;height:20px;border-radius:50%;border:1px solid var(--bord);color:var(--creux);
-  display:flex;align-items:center;justify-content:center;font-size:11px;flex-shrink:0;margin-top:1px;}
-.coche.ok{background:#123326;border-color:var(--gain);color:var(--gain);}
-.etape div{display:flex;flex-direction:column;gap:2px;}
-.etape b{font-size:13px;font-weight:500;}
-.etape span{font-size:12px;color:var(--doux);}
+/* --- Étapes --- */
+.etapes{display:flex;flex-direction:column;gap:14px;margin-bottom:20px;}
+.etape{display:flex;gap:12px;align-items:flex-start;}
+.coche{width:18px;height:18px;border-radius:50%;border:1px solid var(--trait);color:var(--creux);
+  display:flex;align-items:center;justify-content:center;font-size:10px;flex-shrink:0;margin-top:2px;}
+.coche.ok{background:transparent;border-color:var(--gain);color:var(--gain);}
+.etape div{display:flex;flex-direction:column;gap:3px;}
+.etape b{font-size:13px;font-weight:600;}
+.etape span{font-size:12px;color:var(--estompe);}
 
+/* --- Tableaux --- */
 .defile{overflow-x:auto;}
 .tbl{width:100%;border-collapse:collapse;font-size:12.5px;}
-.tbl th{text-align:left;color:var(--creux);font-weight:500;font-size:10.5px;text-transform:uppercase;
-  letter-spacing:.06em;padding:0 10px 8px 0;border-bottom:1px solid var(--bord);white-space:nowrap;}
-.tbl td{padding:9px 10px 9px 0;border-bottom:1px solid #151D27;}
-.tbl tbody tr:hover{background:#131B25;}
-.petit{font-size:12px;color:var(--doux);}
-.col-barre{width:90px;}
-.mini{height:4px;background:var(--surface2);border-radius:2px;}
-.mini-b{height:100%;border-radius:2px;}
+.tbl th{text-align:left;color:var(--creux);font-weight:600;font-size:10px;text-transform:uppercase;
+  letter-spacing:.09em;padding:0 12px 10px 0;border-bottom:1px solid var(--trait);white-space:nowrap;}
+.tbl td{padding:10px 12px 10px 0;border-bottom:1px solid #1E2B2D;}
+.tbl tbody tr:hover{background:var(--brume);}
+.petit{font-size:12px;color:var(--estompe);}
+.col-barre{width:88px;}
+.mini{height:2px;background:var(--trait);}
+.mini-b{height:100%;}
 
-.sens{font-size:11px;padding:2px 7px;border-radius:4px;font-weight:500;}
-.sens.long{background:#123326;color:var(--gain);}
-.sens.court{background:#331A1A;color:var(--perte);}
-.badge{font-size:10.5px;padding:2px 7px;border-radius:4px;}
-.badge.vert{background:#123326;color:var(--gain);}
-.badge.rouge{background:#331A1A;color:var(--perte);}
-.lien{background:none;border:none;color:var(--doux);cursor:pointer;font-size:12px;padding:2px 6px;font-family:'Inter',sans-serif;}
-.lien:hover{color:var(--texte);text-decoration:underline;}
+.sens{font-size:10.5px;padding:2px 8px;border-radius:2px;font-weight:600;letter-spacing:.04em;}
+.sens.long{background:#1D2F26;color:var(--gain);}
+.sens.court{background:#2A1D1B;color:var(--perte);}
+.badge{font-size:10px;padding:2px 8px;border-radius:2px;letter-spacing:.04em;font-weight:600;}
+.badge.vert{background:#1D2F26;color:var(--gain);}
+.badge.rouge{background:#2A1D1B;color:var(--perte);}
+.lien{background:none;border:none;color:var(--creux);cursor:pointer;font-size:12px;
+  padding:2px 6px;font-family:'Karla',sans-serif;}
+.lien:hover{color:var(--papier);text-decoration:underline;}
 .lien.danger:hover{color:var(--perte);}
 
-.formulaire{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px;}
-.champ{display:flex;flex-direction:column;gap:5px;}
-.champ>span{font-size:11px;color:var(--creux);text-transform:uppercase;letter-spacing:.05em;}
+/* --- Formulaires --- */
+.formulaire{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:14px;}
+.champ{display:flex;flex-direction:column;gap:6px;}
+.champ>span{font-size:10px;color:var(--creux);text-transform:uppercase;letter-spacing:.09em;font-weight:600;}
 .champ-large{grid-column:1/-1;}
 .champ input,.champ select,.champ textarea{width:100%;}
-.case{grid-column:1/-1;display:flex;align-items:center;gap:9px;font-size:12.5px;color:var(--doux);cursor:pointer;}
-.case input{width:auto;}
+.case{grid-column:1/-1;display:flex;align-items:center;gap:10px;font-size:12.5px;
+  color:var(--estompe);cursor:pointer;}
+.case input{width:auto;accent-color:#C9A961;}
 
-.recap{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-top:16px;
-  padding-top:14px;border-top:1px solid var(--bord);}
-.recap div{display:flex;flex-direction:column;gap:3px;}
-.recap em{font-style:normal;font-size:10.5px;color:var(--creux);text-transform:uppercase;letter-spacing:.05em;}
-.recap b{font-family:'IBM Plex Mono',monospace;font-size:14px;}
-.aide{color:var(--creux);font-size:11.5px;margin:12px 0 0;line-height:1.55;}
+.recap{display:grid;grid-template-columns:repeat(auto-fit,minmax(128px,1fr));gap:14px;
+  margin-top:20px;padding-top:16px;border-top:1px solid var(--trait);}
+.recap div{display:flex;flex-direction:column;gap:4px;}
+.recap em{font-style:normal;font-size:9.5px;color:var(--creux);text-transform:uppercase;
+  letter-spacing:.09em;font-weight:600;}
+.recap b{font-family:'DM Mono',monospace;font-size:15px;font-weight:500;}
+.aide{color:var(--creux);font-size:12px;margin:14px 0 0;line-height:1.65;}
 
-.note-passee{border-top:1px solid var(--bord);padding:12px 0;}
-.note-passee p{margin:4px 0;font-size:12.5px;color:var(--doux);line-height:1.5;}
+/* --- Rituel --- */
+.feu-zone{margin-bottom:16px;}
+.feu{background:var(--ardoise);border:1px solid var(--trait);border-left:2px solid var(--creux);
+  border-radius:3px;padding:16px 20px;display:flex;justify-content:space-between;align-items:center;
+  gap:18px;flex-wrap:wrap;margin-bottom:10px;}
+.feu.vert{border-left-color:var(--gain);}
+.feu.prudence{border-left-color:var(--laiton);}
+.feu.stop{border-left-color:var(--perte);}
+.feu-etat{display:flex;align-items:center;gap:14px;}
+.feu-point{width:8px;height:8px;border-radius:50%;background:var(--creux);flex-shrink:0;}
+.feu.vert .feu-point{background:var(--gain);}
+.feu.prudence .feu-point{background:var(--laiton);}
+.feu.stop .feu-point{background:var(--perte);}
+.feu-etat div{display:flex;flex-direction:column;gap:3px;}
+.feu-etat b{font-family:'Instrument Serif',serif;font-size:18px;font-weight:400;}
+.feu-etat span{font-size:11.5px;color:var(--estompe);font-family:'DM Mono',monospace;}
+.feu-check{display:flex;gap:18px;font-size:11px;color:var(--creux);letter-spacing:.02em;}
+
+.bloc-check{margin-bottom:20px;}
+.bloc-check h4{font-size:10px;text-transform:uppercase;letter-spacing:.11em;
+  color:var(--creux);margin:0 0 10px;}
+.ligne-check{display:flex;align-items:flex-start;gap:11px;padding:8px 0;font-size:12.5px;
+  color:var(--estompe);cursor:pointer;line-height:1.5;}
+.ligne-check input{width:auto;margin-top:3px;flex-shrink:0;accent-color:#7FA88A;}
+.ligne-check span{flex:1;}
+.ligne-check.ok span{color:var(--papier);}
+.ligne-check button{opacity:0;font-size:14px;}
+.ligne-check:hover button{opacity:1;}
+
+.curseurs{display:flex;flex-direction:column;gap:11px;}
+.curseur span{display:flex;justify-content:space-between;font-size:11.5px;
+  color:var(--estompe);margin-bottom:4px;}
+.curseur b{font-family:'DM Mono',monospace;color:var(--laiton);}
+.curseur input[type=range]{width:100%;padding:0;accent-color:#C9A961;background:none;border:none;}
+
+.note-passee{border-top:1px solid var(--trait);padding:14px 0;}
+.note-passee p{margin:5px 0;font-size:12.5px;color:var(--estompe);line-height:1.6;}
 .note-passee em{color:var(--creux);font-style:normal;}
-.note-tete{display:flex;justify-content:space-between;font-size:12px;color:var(--ambre);}
-.etoiles{display:flex;gap:4px;}
-.etoile{background:none;border:none;color:var(--creux);font-size:20px;cursor:pointer;padding:0;line-height:1;}
-.etoile.pleine{color:var(--ambre);}
+.note-tete{display:flex;justify-content:space-between;font-size:12px;color:var(--laiton);}
+.etoiles{display:flex;gap:5px;}
+.etoile{background:none;border:none;color:var(--trait);font-size:19px;cursor:pointer;padding:0;line-height:1;}
+.etoile.pleine{color:var(--laiton);}
 
-.puces{display:flex;flex-wrap:wrap;gap:7px;margin-bottom:12px;}
-.puce{background:var(--surface2);border:1px solid var(--bord);border-radius:20px;padding:4px 6px 4px 12px;font-size:12px;display:flex;align-items:center;gap:6px;}
-.puce button{background:none;border:none;color:var(--creux);cursor:pointer;font-size:15px;line-height:1;padding:0 4px;}
+.puces{display:flex;flex-wrap:wrap;gap:7px;margin-bottom:14px;}
+.puce{background:var(--brume);border:1px solid var(--trait);border-radius:2px;
+  padding:5px 7px 5px 12px;font-size:12px;display:flex;align-items:center;gap:6px;}
+.puce button{background:none;border:none;color:var(--creux);cursor:pointer;
+  font-size:15px;line-height:1;padding:0 4px;}
 .puce button:hover{color:var(--perte);}
 .ajout{display:flex;gap:8px;}
 .ajout input{flex:1;}
 
-.fond-modal{position:fixed;inset:0;background:rgba(5,8,12,.82);display:flex;align-items:flex-start;
-  justify-content:center;padding:24px 16px;overflow-y:auto;z-index:50;}
-.modal{background:var(--surface);border:1px solid var(--bord);border-radius:14px;padding:22px;width:100%;max-width:760px;}
-.modal.etroit{max-width:440px;}
-.modal-tete{display:flex;justify-content:space-between;align-items:center;margin-bottom:18px;}
-.modal-tete h2{font-size:17px;}
-.fermer{background:none;border:none;color:var(--doux);font-size:26px;line-height:1;cursor:pointer;padding:0 4px;}
-.modal-pied{display:flex;justify-content:flex-end;gap:9px;margin-top:18px;}
-.apercu{display:flex;gap:22px;flex-wrap:wrap;margin-top:16px;padding:13px 15px;background:var(--surface2);border-radius:9px;}
-.apercu div{display:flex;flex-direction:column;gap:3px;}
-.apercu em{font-style:normal;font-size:10.5px;color:var(--creux);text-transform:uppercase;letter-spacing:.05em;}
-.apercu b{font-family:'IBM Plex Mono',monospace;font-size:16px;}
-.depassement{color:var(--ambre);font-size:12px;align-self:center;}
+/* --- Verrou et sas --- */
+.verrou-bandeau{background:var(--ardoise);border:1px solid var(--trait);
+  border-left:2px solid var(--creux);border-radius:3px;padding:15px 20px;margin-bottom:16px;
+  display:flex;justify-content:space-between;align-items:center;gap:16px;}
+.verrou-bandeau div{display:flex;flex-direction:column;gap:4px;}
+.verrou-bandeau b{font-family:'Instrument Serif',serif;font-size:18px;font-weight:400;color:var(--papier);}
+.verrou-bandeau span{font-size:12px;color:var(--estompe);line-height:1.6;}
 
-.info{background:var(--surface2);border:1px solid var(--bord);border-radius:8px;padding:8px 11px;font-size:12px;
-  display:flex;flex-direction:column;gap:3px;}
-.info span{color:var(--creux);font-size:11px;}
-.info b{font-family:'IBM Plex Mono',monospace;font-size:14px;}
+.fond-modal{position:fixed;inset:0;background:rgba(8,13,14,.94);display:flex;align-items:flex-start;
+  justify-content:center;padding:28px 16px;overflow-y:auto;z-index:50;}
+.fond-modal.sas{align-items:center;}
+.modal{background:var(--ardoise);border:1px solid var(--trait);border-radius:3px;
+  padding:26px;width:100%;max-width:760px;}
+.modal.etroit{max-width:450px;}
+.modal-tete{display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;}
+.modal-tete h2{font-size:22px;}
+.fermer{background:none;border:none;color:var(--creux);font-size:24px;line-height:1;
+  cursor:pointer;padding:0 4px;}
+.fermer:hover{color:var(--papier);}
+.modal-pied{display:flex;justify-content:flex-end;gap:10px;margin-top:20px;}
+.apercu{display:flex;gap:26px;flex-wrap:wrap;margin-top:18px;padding:15px 17px;
+  background:var(--brume);border-radius:2px;}
+.apercu div{display:flex;flex-direction:column;gap:4px;}
+.apercu em{font-style:normal;font-size:9.5px;color:var(--creux);text-transform:uppercase;
+  letter-spacing:.09em;font-weight:600;}
+.apercu b{font-family:'DM Mono',monospace;font-size:16px;font-weight:500;}
+.depassement{color:var(--laiton);font-size:12px;align-self:center;}
 
-.feu-zone{margin-bottom:14px;}
-.feu{background:var(--surface);border:1px solid var(--bord);border-left:3px solid var(--creux);
-  border-radius:12px;padding:15px 18px;display:flex;justify-content:space-between;align-items:center;
-  gap:16px;flex-wrap:wrap;margin-bottom:10px;}
-.feu.vert{border-left-color:var(--gain);}
-.feu.prudence{border-left-color:var(--ambre);}
-.feu.stop{border-left-color:var(--perte);}
-.feu-etat{display:flex;align-items:center;gap:13px;}
-.feu-point{width:11px;height:11px;border-radius:50%;background:var(--creux);flex-shrink:0;}
-.feu.vert .feu-point{background:var(--gain);box-shadow:0 0 12px #3DD68C66;}
-.feu.prudence .feu-point{background:var(--ambre);box-shadow:0 0 12px #F2A03D66;}
-.feu.stop .feu-point{background:var(--perte);box-shadow:0 0 12px #FF5C5C66;}
-.feu-etat div{display:flex;flex-direction:column;gap:2px;}
-.feu-etat b{font-family:'Space Grotesk',sans-serif;font-size:15px;}
-.feu-etat span{font-size:12px;color:var(--doux);font-family:'IBM Plex Mono',monospace;}
-.feu-check{display:flex;gap:16px;font-size:11.5px;color:var(--creux);}
-.alerte.douce{background:#2E2410;border-color:#5A4718;color:#F2C98D;}
+.sas-tete{text-align:center;margin-bottom:26px;}
+.sas-montant{display:block;font-family:'DM Mono',monospace;font-size:32px;
+  font-weight:400;color:var(--perte);letter-spacing:-.02em;}
+.sas-sous{display:block;font-family:'Instrument Serif',serif;font-style:italic;
+  font-size:17px;color:var(--estompe);margin-top:10px;}
+.sas-horloge{text-align:center;margin-bottom:26px;}
+.sas-temps{display:block;font-family:'DM Mono',monospace;font-size:24px;
+  color:var(--laiton);margin-bottom:12px;letter-spacing:.06em;}
 
-.bloc-check{margin-bottom:16px;}
-.bloc-check h4{font-family:'Inter',sans-serif;font-size:10.5px;text-transform:uppercase;letter-spacing:.08em;
-  color:var(--creux);margin:0 0 8px;font-weight:600;}
-.ligne-check{display:flex;align-items:flex-start;gap:10px;padding:7px 0;font-size:12.5px;
-  color:var(--doux);cursor:pointer;line-height:1.45;}
-.ligne-check input{width:auto;margin-top:2px;flex-shrink:0;accent-color:#3DD68C;}
-.ligne-check span{flex:1;}
-.ligne-check.ok span{color:var(--texte);}
-.ligne-check button{opacity:0;font-size:14px;}
-.ligne-check:hover button{opacity:1;}
+/* --- Synchronisation --- */
+.sync-actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:16px;}
+.sync-etat{margin-top:14px;padding:11px 14px;border-radius:2px;font-size:12.5px;
+  font-family:'DM Mono',monospace;}
+.sync-etat.ok{background:#1D2F26;color:var(--gain);}
+.sync-etat.erreur{background:#2A1D1B;color:var(--perte);}
+.sync-etat.occupe{background:var(--brume);color:var(--estompe);}
+.etat-sauve{margin-left:11px;font-family:'DM Mono',monospace;font-size:10.5px;
+  padding:2px 9px;border-radius:2px;}
+.etat-sauve.ok{background:#1D2F26;color:var(--gain);}
+.etat-sauve.ko{background:#2A1D1B;color:var(--perte);}
 
-.curseurs{display:flex;flex-direction:column;gap:9px;}
-.curseur span{display:flex;justify-content:space-between;font-size:11.5px;color:var(--doux);margin-bottom:3px;}
-.curseur b{font-family:'IBM Plex Mono',monospace;color:var(--ambre);}
-.curseur input[type=range]{width:100%;padding:0;accent-color:#F2A03D;background:none;border:none;}
+.info{background:var(--brume);border:1px solid var(--trait);border-radius:2px;padding:9px 12px;
+  font-size:12px;display:flex;flex-direction:column;gap:4px;}
+.info span{color:var(--creux);font-size:10.5px;}
+.info b{font-family:'DM Mono',monospace;font-size:14px;font-weight:500;}
 
-.verrou-bandeau{background:#1A1420;border:1px solid #3A2A45;border-left:3px solid #A97BD6;border-radius:10px;
-  padding:13px 17px;margin-bottom:14px;display:flex;justify-content:space-between;align-items:center;gap:14px;}
-.verrou-bandeau div{display:flex;flex-direction:column;gap:3px;}
-.verrou-bandeau b{font-family:'Space Grotesk',sans-serif;font-size:14px;color:#C9A7E8;}
-.verrou-bandeau span{font-size:12px;color:var(--doux);line-height:1.5;}
-
-.fond-modal.sas{background:rgba(5,8,12,.96);align-items:center;}
-.sas-tete{text-align:center;margin-bottom:22px;}
-.sas-montant{display:block;font-family:'IBM Plex Mono',monospace;font-size:34px;font-weight:600;color:var(--perte);}
-.sas-sous{display:block;font-size:12.5px;color:var(--doux);margin-top:6px;}
-.sas-horloge{text-align:center;margin-bottom:22px;}
-.sas-temps{display:block;font-family:'IBM Plex Mono',monospace;font-size:26px;color:var(--ambre);margin-bottom:10px;
-  letter-spacing:.04em;}
-.btn.danger-plein{background:#331A1A;border-color:#6B2B2B;color:#FFB4B4;}
-.btn.danger-plein:hover{background:#4A2020;}
-
-.etat-sauve{margin-left:10px;font-family:'IBM Plex Mono',monospace;font-size:11px;padding:2px 8px;border-radius:10px;}
-.etat-sauve.ok{background:#123326;color:#3DD68C;}
-.etat-sauve.ko{background:#331A1A;color:#FF5C5C;}
-
-.sync-actions{display:flex;gap:9px;flex-wrap:wrap;margin-top:14px;}
-.sync-etat{margin-top:12px;padding:10px 13px;border-radius:8px;font-size:12.5px;
-  font-family:'IBM Plex Mono',monospace;}
-.sync-etat.ok{background:#123326;color:#3DD68C;}
-.sync-etat.erreur{background:#331A1A;color:#FF5C5C;}
-.sync-etat.occupe{background:var(--surface2);color:var(--doux);}
-
-.pied{color:var(--creux);font-size:11.5px;margin-top:22px;padding-top:14px;border-top:1px solid var(--bord);line-height:1.6;}
+.pied{color:var(--creux);font-size:11.5px;margin-top:26px;padding-top:16px;
+  border-top:1px solid var(--trait);line-height:1.7;max-width:66ch;}
 
 @media (max-width:640px){
-  .app{padding:14px;}
-  .tete h1{font-size:21px;}
+  .app{padding:15px;}
+  .tete h1{font-size:24px;}
   .grille2,.vies{grid-template-columns:1fr;}
   .kpis{grid-template-columns:repeat(2,1fr);}
+  .souffle{flex-wrap:wrap;gap:11px;padding:14px 16px;}
+  .souffle-mot{font-size:16.5px;flex-basis:calc(100% - 25px);}
+  .souffle-etat{flex-basis:100%;}
 }
 `;
